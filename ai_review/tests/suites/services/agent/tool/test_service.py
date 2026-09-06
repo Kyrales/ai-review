@@ -1,4 +1,6 @@
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -6,6 +8,11 @@ import pytest
 from ai_review.config import settings
 from ai_review.services.agent.tool.service import AgentToolService
 from ai_review.tests.fixtures.services.policy import FakePolicyService
+
+
+def python_command(code: str) -> str:
+    """Build a command that exercises shell=False on every supported OS."""
+    return f"{shlex.quote(sys.executable)} -c {shlex.quote(code)}"
 
 
 @pytest.mark.asyncio
@@ -17,7 +24,9 @@ async def test_execute_runs_allowed_command(
     (tmp_path / "sample.txt").write_text("hello", encoding="utf-8")
     fake_policy_service.responses["should_agent_run_command"] = True
 
-    result = await agent_tool_service.execute("cat sample.txt")
+    result = await agent_tool_service.execute(
+        python_command("from pathlib import Path; print(Path('sample.txt').read_text())")
+    )
 
     assert "exit_code: 0" in result
     assert "hello" in result
@@ -31,7 +40,7 @@ async def test_execute_blocks_disallowed_command(
 ) -> None:
     fake_policy_service.responses["should_agent_run_command"] = False
 
-    result = await agent_tool_service.execute("cat sample.txt")
+    result = await agent_tool_service.execute(python_command("print('blocked')"))
 
     assert "blocked by policy" in result.lower()
 
@@ -45,7 +54,9 @@ async def test_execute_runs_in_repo_directory(
     (tmp_path / "visible.txt").write_text("ok", encoding="utf-8")
     fake_policy_service.responses["should_agent_run_command"] = True
 
-    result = await agent_tool_service.execute("ls")
+    result = await agent_tool_service.execute(
+        python_command("from pathlib import Path; print(*(item.name for item in Path('.').iterdir()))")
+    )
 
     assert "visible.txt" in result
 
@@ -63,7 +74,9 @@ async def test_execute_truncates_large_output(
     monkeypatch.setattr(settings.agent, "max_command_output_chars", 1_000)
     agent_tool_service.max_command_output_chars = 1_000
 
-    result = await agent_tool_service.execute("cat big.txt")
+    result = await agent_tool_service.execute(
+        python_command("from pathlib import Path; print(Path('big.txt').read_text())")
+    )
 
     assert "output truncated" in result
 
@@ -134,7 +147,9 @@ async def test_execute_captures_non_zero_exit_code(
 ) -> None:
     fake_policy_service.responses["should_agent_run_command"] = True
 
-    result = await agent_tool_service.execute("cat nonexistent_file.txt")
+    result = await agent_tool_service.execute(
+        python_command("import sys; sys.stderr.write('not found\\n'); raise SystemExit(2)")
+    )
 
     assert "exit_code: 1" in result or "exit_code: 2" in result
     assert "no such file" in result.lower() or "not found" in result.lower()
@@ -148,7 +163,9 @@ async def test_execute_captures_stderr(
 ) -> None:
     fake_policy_service.responses["should_agent_run_command"] = True
 
-    result = await agent_tool_service.execute("ls nonexistent_dir")
+    result = await agent_tool_service.execute(
+        python_command("import sys; sys.stderr.write('not found\\n'); raise SystemExit(2)")
+    )
 
     assert "stderr:" in result
     assert "no such file" in result.lower() or "not found" in result.lower()
