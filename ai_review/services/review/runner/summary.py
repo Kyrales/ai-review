@@ -40,6 +40,14 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
         self.review_llm_gateway = review_llm_gateway
         self.review_comment_gateway = review_comment_gateway
 
+    async def post_terminal_summary(self, text: str, status: str, head_sha: str) -> None:
+        summary = self.summary_comment.parse_model_output(text)
+        summary.text = decorate_ai_message(
+            summary.text,
+            ReviewMarker(kind=MarkerKind.SUMMARY, status=status, head=head_sha),
+        )
+        await self.review_comment_gateway.process_summary_comment(summary)
+
     async def run(self) -> None:
         await hook.emit_summary_review_start()
 
@@ -51,22 +59,24 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
         review_info = await self.vcs.get_review_info()
         inline_comments = await self.review_comment_gateway.get_inline_comments()
         if inline_comments and settings.vcs.provider is VCSProvider.GITFLIC:
-            summary = self.summary_comment.parse_model_output(
+            await self.post_terminal_summary(
                 "Initial review was partially recovered: previously published findings were kept; "
-                "the remaining inline review was not regenerated."
-            )
-            marker = ReviewMarker(
-                kind=MarkerKind.SUMMARY,
+                "the remaining inline review was not regenerated.",
                 status="complete_with_partial_recovery",
-                head=review_info.head_sha,
+                head_sha=review_info.head_sha,
             )
-            summary.text = decorate_ai_message(summary.text, marker)
-            await self.review_comment_gateway.process_summary_comment(summary)
             await hook.emit_summary_review_complete(self.cost.aggregate())
             return
         changed_files = self.policy.apply_for_files(review_info.changed_files)
         if not changed_files:
             logger.info("No files to review for summary")
+            if settings.vcs.provider is VCSProvider.GITFLIC:
+                await self.post_terminal_summary(
+                    "No reviewable changes were found.",
+                    status="complete",
+                    head_sha=review_info.head_sha,
+                )
+                await hook.emit_summary_review_complete(self.cost.aggregate())
             return
 
         logger.info(f"Starting summary review: {len(changed_files)} files changed")
@@ -85,8 +95,20 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
         summary = self.summary_comment.parse_model_output(prompt_result)
         if not summary.text.strip():
             logger.warning("Summary LLM output was empty, skipping comment")
+            if settings.vcs.provider is VCSProvider.GITFLIC:
+                await self.post_terminal_summary(
+                    "The summary model returned an empty response; inline findings, if any, were preserved.",
+                    status="complete_with_warnings",
+                    head_sha=review_info.head_sha,
+                )
+                await hook.emit_summary_review_complete(self.cost.aggregate())
             return
 
         logger.info(f"Posting summary review comment ({len(summary.text)} chars)")
+        if settings.vcs.provider is VCSProvider.GITFLIC:
+            summary.text = decorate_ai_message(
+                summary.text,
+                ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=review_info.head_sha),
+            )
         await self.review_comment_gateway.process_summary_comment(summary)
         await hook.emit_summary_review_complete(self.cost.aggregate())
