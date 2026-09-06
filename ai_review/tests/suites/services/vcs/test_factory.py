@@ -15,6 +15,14 @@ def test_get_vcs_client_returns_gitea(monkeypatch: pytest.MonkeyPatch):
     assert isinstance(client, GiteaVCSClient)
 
 
+def test_get_vcs_client_returns_gitflic(monkeypatch: pytest.MonkeyPatch):
+    expected = object()
+    monkeypatch.setattr("ai_review.services.vcs.factory.settings.vcs.provider", "GITFLIC")
+    monkeypatch.setattr("ai_review.services.vcs.factory.GitFlicVCSClient", lambda: expected)
+
+    assert get_vcs_client() is expected
+
+
 @pytest.mark.usefixtures("github_http_client_config")
 def test_get_vcs_client_returns_github(monkeypatch: pytest.MonkeyPatch):
     client = get_vcs_client()

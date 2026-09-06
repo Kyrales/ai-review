@@ -10,6 +10,7 @@ from ai_review.cli.commands.run_inline_review import run_inline_review_command
 from ai_review.cli.commands.run_review import run_review_command
 from ai_review.cli.commands.run_summary_reply_review import run_summary_reply_review_command
 from ai_review.cli.commands.run_summary_review import run_summary_review_command
+from ai_review.cli.commands.run_followup_review import run_followup_review_command
 from ai_review.config import settings
 
 app = typer.Typer(help="AI Review CLI")
@@ -60,6 +61,12 @@ def run_summary_reply():
     typer.secho("Starting summary reply AI review...", fg=typer.colors.CYAN)
     asyncio.run(run_summary_reply_review_command())
     typer.secho("AI review completed successfully!", fg=typer.colors.GREEN, bold=True)
+
+
+@app.command("run-followup")
+def run_followup():
+    """Re-check developer replies to trusted GitFlic findings."""
+    asyncio.run(run_followup_review_command())
 
 
 @app.command("clear-inline")

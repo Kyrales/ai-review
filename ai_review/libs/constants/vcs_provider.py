@@ -3,6 +3,7 @@ from enum import StrEnum
 
 class VCSProvider(StrEnum):
     GITEA = "GITEA"
+    GITFLIC = "GITFLIC"
     GITHUB = "GITHUB"
     GITLAB = "GITLAB"
     AZURE_DEVOPS = "AZURE_DEVOPS"

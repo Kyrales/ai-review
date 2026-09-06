@@ -1,28 +1,51 @@
-name: 🚀 Publish
+name: Publish GitFlic fork
 
 on:
   push:
-    tags:
-      - 'v*'
+    branches: [main]
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
-  lint:
-    name: 🧹 lint
-    uses: ./.github/workflows/reusable-lint.yml
-
-  test:
-    name: 🧪 test
-    uses: ./.github/workflows/reusable-test.yml
-    needs: lint
-
-  pypi:
-    name: 📦 pypi
-    uses: ./.github/workflows/reusable-pypi.yml
-    needs: test
-    secrets: inherit
-
-  docker:
-    name: 🐳 docker
-    uses: ./.github/workflows/reusable-docker.yml
-    needs: pypi
-    secrets: inherit
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.12'
+      - run: pip install -e '.[test]'
+      - run: pytest -q
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          push: false
+          load: true
+          context: .
+          build-args: VCS_REF=${{ github.sha }}
+          tags: ai-review-gitflic:ci
+      - name: Smoke test protected runtime image
+        run: >-
+          docker run --rm --read-only
+          --mount type=bind,src="$PWD",dst=/review,readonly
+          --mount type=tmpfs,dst=/tmp
+          --mount type=tmpfs,dst=/artifacts
+          -e AI_REVIEW_CONFIG_FILE_YAML=/review/ai_review/tests/configs/config-test.yaml
+          -e ARTIFACTS__LLM_DIR=/artifacts/llm
+          -e ARTIFACTS__VCS_DIR=/artifacts/vcs
+          -e ARTIFACTS__RUN_DIR=/artifacts/run
+          ai-review-gitflic:ci run-followup --help
+      - name: Publish verified image
+        run: |
+          docker tag ai-review-gitflic:ci ghcr.io/kyrales/ai-review:latest
+          docker push ghcr.io/kyrales/ai-review:latest
+      - name: Verify anonymous image pull
+        run: |
+          docker logout ghcr.io
+          docker pull ghcr.io/kyrales/ai-review:latest
