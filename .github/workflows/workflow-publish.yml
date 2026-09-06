@@ -18,6 +18,8 @@ jobs:
           python-version: '3.12'
       - run: pip install -e '.[test]'
       - run: pytest -q
+        env:
+          AI_REVIEW_CONFIG_FILE_YAML: ./ai_review/tests/configs/config-test.yaml
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
