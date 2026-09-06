@@ -84,6 +84,14 @@ only runtime marker metadata published by the configured GitFlic user and
 rechecks a thread before resolving it. Keep source checkouts read-only and
 store YAML configuration and prompts in the protected control pipeline.
 
+#### First GHCR publication
+
+The first push creates the `ghcr.io/kyrales/ai-review` package. A GitHub
+organization/package administrator must set its visibility to **Public** in
+the package settings, then rerun the publish workflow. The workflow finishes
+by pulling the image anonymously; this is the release gate that proves
+`ghcr.io/kyrales/ai-review:latest` is public.
+
 ---
 
 ## 🧪 Live Preview
