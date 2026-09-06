@@ -9,8 +9,8 @@ from ai_review.services.prompt.types import PromptServiceProtocol
 from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol, ReviewCommentGatewayProtocol
 from ai_review.services.review.internal.summary.types import SummaryCommentServiceProtocol
 from ai_review.services.review.runner.types import ReviewRunnerProtocol
-from ai_review.services.vcs.types import VCSClientProtocol
-from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message
+from ai_review.services.vcs.types import ReviewCommentSchema, VCSClientProtocol
+from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message, parse_marker
 from ai_review.config import settings
 from ai_review.libs.constants.vcs_provider import VCSProvider
 
@@ -46,19 +46,46 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
             summary.text,
             ReviewMarker(kind=MarkerKind.SUMMARY, status=status, head=head_sha),
         )
-        await self.review_comment_gateway.process_summary_comment(summary)
+        posted = await self.review_comment_gateway.process_summary_comment(summary)
+        if posted is False:
+            raise RuntimeError("Failed to publish terminal GitFlic summary")
+
+    @staticmethod
+    def has_current_marker(comments: list[ReviewCommentSchema], kind: MarkerKind, head_sha: str) -> bool:
+        trusted_user_id = os.getenv("AI_REVIEW_GITFLIC_USER_ID")
+        if not trusted_user_id:
+            return False
+        for comment in comments:
+            marker = parse_marker(
+                comment.body,
+                comment.author.id if comment.author else None,
+                trusted_user_id,
+            )
+            if marker and marker.kind is kind and marker.head == head_sha:
+                return True
+        return False
 
     async def run(self) -> None:
         await hook.emit_summary_review_start()
 
-        comments = await self.review_comment_gateway.get_summary_comments()
-        if comments:
-            logger.info(f"Detected {len(comments)} existing AI summary comments, skipping summary review")
-            return
+        if settings.vcs.provider is not VCSProvider.GITFLIC:
+            comments = await self.review_comment_gateway.get_summary_comments()
+            if comments:
+                logger.info(f"Detected {len(comments)} existing AI summary comments, skipping summary review")
+                return
 
         review_info = await self.vcs.get_review_info()
-        inline_comments = await self.review_comment_gateway.get_inline_comments()
-        if inline_comments and settings.vcs.provider is VCSProvider.GITFLIC:
+        if settings.vcs.provider is VCSProvider.GITFLIC:
+            summary_comments = await self.vcs.get_general_comments()
+            if self.has_current_marker(summary_comments, MarkerKind.SUMMARY, review_info.head_sha):
+                logger.info("Detected terminal GitFlic summary for current HEAD, skipping summary review")
+                return
+            inline_comments = await self.vcs.get_inline_comments()
+        else:
+            inline_comments = await self.review_comment_gateway.get_inline_comments()
+        if settings.vcs.provider is VCSProvider.GITFLIC and self.has_current_marker(
+                inline_comments, MarkerKind.FINDING, review_info.head_sha,
+        ):
             await self.post_terminal_summary(
                 "Initial review was partially recovered: previously published findings were kept; "
                 "the remaining inline review was not regenerated.",
@@ -106,9 +133,13 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
 
         logger.info(f"Posting summary review comment ({len(summary.text)} chars)")
         if settings.vcs.provider is VCSProvider.GITFLIC:
+            status = "complete_with_warnings" if getattr(
+                self.review_comment_gateway, "inline_publication_failures", 0,
+            ) else "complete"
             summary.text = decorate_ai_message(
                 summary.text,
-                ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=review_info.head_sha),
+                ReviewMarker(kind=MarkerKind.SUMMARY, status=status, head=review_info.head_sha),
             )
         await self.review_comment_gateway.process_summary_comment(summary)
         await hook.emit_summary_review_complete(self.cost.aggregate())
+import os

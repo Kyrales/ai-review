@@ -3,8 +3,8 @@ import pytest
 from ai_review.config import settings
 from ai_review.libs.constants.vcs_provider import VCSProvider
 from ai_review.services.review.internal.summary.schema import SummaryCommentSchema
-from ai_review.services.vcs.gitflic.markers import MarkerKind, parse_marker
-from ai_review.services.vcs.types import ReviewCommentSchema, ReviewInfoSchema
+from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message, parse_marker
+from ai_review.services.vcs.types import ReviewCommentSchema, ReviewInfoSchema, UserSchema
 
 
 HEAD = "a" * 40
@@ -12,6 +12,7 @@ HEAD = "a" * 40
 
 def _gitflic(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(settings.vcs, "provider", VCSProvider.GITFLIC)
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
 
 
 def _terminal_marker(gateway):
@@ -28,10 +29,11 @@ async def test_partial_inline_then_summary_retry_is_terminal(
     fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
         changed_files=["file.py"], base_sha="b" * 40, head_sha=HEAD,
     )
-    fake_review_comment_gateway.responses.update({
-        "get_summary_comments": [],
-        "get_inline_comments": [ReviewCommentSchema(id="f1", body="finding")],
-    })
+    fake_review_comment_gateway.responses.update({"get_summary_comments": [], "get_inline_comments": []})
+    fake_vcs_client.responses["get_inline_comments"] = [ReviewCommentSchema(
+        id="f1", author=UserSchema(id="owner"),
+        body=decorate_ai_message("finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)),
+    )]
 
     await summary_review_runner.run()
 
@@ -40,6 +42,31 @@ async def test_partial_inline_then_summary_retry_is_terminal(
     assert marker.kind is MarkerKind.SUMMARY
     assert marker.status == "complete_with_partial_recovery"
     assert not any(call[0] == "ask" for call in fake_review_direct_llm_gateway.calls)
+
+
+@pytest.mark.asyncio
+async def test_old_or_untrusted_gitflic_comments_do_not_block_current_summary(
+        monkeypatch, summary_review_runner, fake_vcs_client, fake_review_comment_gateway,
+        fake_review_direct_llm_gateway,
+):
+    _gitflic(monkeypatch)
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=["file.py"], base_sha="b" * 40, head_sha=HEAD,
+    )
+    fake_review_comment_gateway.responses.update({"get_summary_comments": [], "get_inline_comments": []})
+    fake_vcs_client.responses["get_general_comments"] = [ReviewCommentSchema(
+        id="old", author=UserSchema(id="owner"),
+        body=decorate_ai_message("old", ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head="b" * 40)),
+    )]
+    fake_vcs_client.responses["get_inline_comments"] = [ReviewCommentSchema(
+        id="untrusted", author=UserSchema(id="other"),
+        body=decorate_ai_message("finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)),
+    )]
+
+    await summary_review_runner.run()
+
+    assert any(call[0] == "ask" for call in fake_review_direct_llm_gateway.calls)
+    assert _terminal_marker(fake_review_comment_gateway).status == "complete"
 
 
 @pytest.mark.asyncio
@@ -96,3 +123,19 @@ async def test_empty_summary_is_terminal_with_warning_for_gitflic(
     marker = _terminal_marker(fake_review_comment_gateway)
     assert marker is not None
     assert marker.status == "complete_with_warnings"
+
+
+@pytest.mark.asyncio
+async def test_inline_publication_failure_marks_terminal_summary_with_warning(
+        monkeypatch, summary_review_runner, fake_vcs_client, fake_review_comment_gateway,
+):
+    _gitflic(monkeypatch)
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=["file.py"], base_sha="b" * 40, head_sha=HEAD,
+    )
+    fake_review_comment_gateway.responses.update({"get_summary_comments": [], "get_inline_comments": []})
+    fake_review_comment_gateway.inline_publication_failures = 1
+
+    await summary_review_runner.run()
+
+    assert _terminal_marker(fake_review_comment_gateway).status == "complete_with_warnings"

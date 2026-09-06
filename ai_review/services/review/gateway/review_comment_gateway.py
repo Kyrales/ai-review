@@ -22,6 +22,7 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
     def __init__(self, vcs: VCSClientProtocol, artifacts: ArtifactsServiceProtocol):
         self.vcs = vcs
         self.artifacts = artifacts
+        self.inline_publication_failures = 0
 
     async def get_inline_threads(self) -> list[ReviewThreadSchema]:
         threads = await self.vcs.get_inline_threads()
@@ -99,7 +100,7 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
             logger.exception(f"Failed to create summary reply for thread {thread_id}: {error}")
             await hook.emit_summary_comment_reply_error(reply)
 
-    async def process_inline_comment(self, comment: InlineCommentSchema) -> None:
+    async def process_inline_comment(self, comment: InlineCommentSchema) -> bool:
         try:
             await hook.emit_inline_comment_start(comment)
             await self.vcs.create_inline_comment(
@@ -110,6 +111,7 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
             await hook.emit_inline_comment_complete(comment)
 
             await self.artifacts.save_vcs_inline(comment)
+            return True
         except Exception as error:
             logger.exception(
                 f"Failed to process inline comment for {comment.file}:{comment.line} — {error}"
@@ -119,6 +121,7 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
             if settings.review.inline_comment_fallback:
                 logger.warning(f"Falling back to general comment for {comment.file}:{comment.line}")
                 await self.process_inline_fallback_comment(SummaryCommentSchema(text=comment.fallback_body))
+            return False
 
     async def process_inline_fallback_comment(self, comment: SummaryCommentSchema) -> None:
         try:
@@ -131,19 +134,22 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
             logger.exception(f"Failed to process inline fallback comment: {comment} — {error}")
             await hook.emit_summary_comment_error(comment)
 
-    async def process_summary_comment(self, comment: SummaryCommentSchema) -> None:
+    async def process_summary_comment(self, comment: SummaryCommentSchema) -> bool:
         try:
             await hook.emit_summary_comment_start(comment)
             await self.vcs.create_general_comment(comment.body_with_tag)
             await hook.emit_summary_comment_complete(comment)
 
             await self.artifacts.save_vcs_summary(comment)
+            return True
         except Exception as error:
             logger.exception(f"Failed to process summary comment: {comment} — {error}")
             await hook.emit_summary_comment_error(comment)
+            return False
 
     async def process_inline_comments(self, comments: InlineCommentListSchema) -> None:
-        await bounded_gather([self.process_inline_comment(comment) for comment in comments.root])
+        published = await bounded_gather([self.process_inline_comment(comment) for comment in comments.root])
+        self.inline_publication_failures += sum(result is False for result in published)
 
     async def finalize(self) -> None:
         if not isinstance(self.vcs, SupportsBatchedComments):
