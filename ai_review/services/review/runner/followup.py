@@ -44,12 +44,14 @@ class FollowupReviewRunner:
         if not pending:
             if self._last_followup_is_fixed(thread) and isinstance(self.vcs, SupportsResolvableThreads):
                 refreshed = next((item for item in await self.vcs.get_inline_threads() if item.id == thread.id), None)
-                if refreshed is not None and not self._pending(refreshed):
+                if refreshed is not None and not self._pending(refreshed) and self._last_followup_is_fixed(refreshed):
                     await self.vcs.resolve_thread(thread.id)
             return
-        prompt = "Проверь ответ разработчика на замечание. Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n" + "\n".join(
-            comment.body for comment in thread.comments
-        )
+        selected_ids = {str(item) for item in pending}
+        context = [thread.comments[0].body] + [
+            comment.body for comment in thread.comments[1:] if str(comment.id) in selected_ids
+        ]
+        prompt = "Проверь ответ разработчика на замечание. Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n" + "\n".join(context)
         result = self.parser.parse_output(await self.review_llm_gateway.ask(prompt, "Ты AI-ревьювер."))
         if not result:
             return
@@ -59,7 +61,7 @@ class FollowupReviewRunner:
         if result.verdict != "fixed" or not isinstance(self.vcs, SupportsResolvableThreads):
             return
         refreshed = next((item for item in await self.vcs.get_inline_threads() if item.id == thread.id), None)
-        if refreshed is not None and not self._pending(refreshed):
+        if refreshed is not None and not self._pending(refreshed) and self._last_followup_is_fixed(refreshed):
             await self.vcs.resolve_thread(thread.id)
 
     async def run(self) -> None:
