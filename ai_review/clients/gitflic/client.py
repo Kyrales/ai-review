@@ -156,3 +156,7 @@ class GitFlicHTTPClient(HTTPClient):
 
     async def aclose(self) -> None:
         await self.http.aclose()
+
+
+def get_gitflic_http_client() -> GitFlicHTTPClient:
+    return GitFlicHTTPClient()

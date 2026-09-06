@@ -12,6 +12,7 @@ from ai_review.libs.config.vcs.bitbucket_server import (
     BitbucketServerHTTPClientConfig
 )
 from ai_review.libs.config.vcs.gitea import GiteaPipelineConfig, GiteaHTTPClientConfig
+from ai_review.libs.config.vcs.gitflic import GitFlicPipelineConfig, GitFlicHTTPClientConfig
 from ai_review.libs.config.vcs.github import GitHubPipelineConfig, GitHubHTTPClientConfig
 from ai_review.libs.config.vcs.gitlab import GitLabPipelineConfig, GitLabHTTPClientConfig
 from ai_review.libs.config.vcs.pagination import VCSPaginationConfig
@@ -27,6 +28,12 @@ class GiteaVCSConfig(VCSConfigBase):
     provider: Literal[VCSProvider.GITEA]
     pipeline: GiteaPipelineConfig
     http_client: GiteaHTTPClientConfig
+
+
+class GitFlicVCSConfig(VCSConfigBase):
+    provider: Literal[VCSProvider.GITFLIC]
+    pipeline: GitFlicPipelineConfig
+    http_client: GitFlicHTTPClientConfig
 
 
 class GitLabVCSConfig(VCSConfigBase):
@@ -62,6 +69,7 @@ class BitbucketServerVCSConfig(VCSConfigBase):
 
 VCSConfig = Annotated[
     GiteaVCSConfig
+    | GitFlicVCSConfig
     | GitLabVCSConfig
     | GitHubVCSConfig
     | AzureDevOpsVCSConfig

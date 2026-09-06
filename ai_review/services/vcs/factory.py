@@ -4,6 +4,7 @@ from ai_review.services.vcs.azure_devops.client import AzureDevOpsVCSClient
 from ai_review.services.vcs.bitbucket_cloud.client import BitbucketCloudVCSClient
 from ai_review.services.vcs.bitbucket_server.client import BitbucketServerVCSClient
 from ai_review.services.vcs.gitea.client import GiteaVCSClient
+from ai_review.services.vcs.gitflic.client import GitFlicVCSClient
 from ai_review.services.vcs.github.client import GitHubVCSClient
 from ai_review.services.vcs.gitlab.client import GitLabVCSClient
 from ai_review.services.vcs.types import VCSClientProtocol
@@ -13,6 +14,8 @@ def get_vcs_client() -> VCSClientProtocol:
     match settings.vcs.provider:
         case VCSProvider.GITEA:
             return GiteaVCSClient()
+        case VCSProvider.GITFLIC:
+            return GitFlicVCSClient()
         case VCSProvider.GITLAB:
             return GitLabVCSClient()
         case VCSProvider.GITHUB:

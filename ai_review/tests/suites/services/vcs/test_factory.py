@@ -5,6 +5,7 @@ from ai_review.services.vcs.bitbucket_cloud.client import BitbucketCloudVCSClien
 from ai_review.services.vcs.bitbucket_server.client import BitbucketServerVCSClient
 from ai_review.services.vcs.factory import get_vcs_client
 from ai_review.services.vcs.gitea.client import GiteaVCSClient
+from ai_review.services.vcs.gitflic.client import GitFlicVCSClient
 from ai_review.services.vcs.github.client import GitHubVCSClient
 from ai_review.services.vcs.gitlab.client import GitLabVCSClient
 
@@ -13,6 +14,14 @@ from ai_review.services.vcs.gitlab.client import GitLabVCSClient
 def test_get_vcs_client_returns_gitea(monkeypatch: pytest.MonkeyPatch):
     client = get_vcs_client()
     assert isinstance(client, GiteaVCSClient)
+
+
+def test_get_vcs_client_returns_gitflic(monkeypatch: pytest.MonkeyPatch):
+    expected = object()
+    monkeypatch.setattr("ai_review.services.vcs.factory.settings.vcs.provider", "GITFLIC")
+    monkeypatch.setattr("ai_review.services.vcs.factory.GitFlicVCSClient", lambda: expected)
+
+    assert get_vcs_client() is expected
 
 
 @pytest.mark.usefixtures("github_http_client_config")
