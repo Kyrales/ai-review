@@ -40,6 +40,9 @@ def test_marker_rejects_unknown_duplicate_and_invalid_values() -> None:
         "<!-- ai-review:v2;kind=finding;head=" + HEAD + " -->",
         "<!-- ai-review:v1;kind=finding;head=not-a-sha -->",
         f"<!-- ai-review:v1;kind=followup;head={HEAD};covered=not-a-uuid;verdict=fixed -->",
+        f"<!-- ai-review:v1;kind=finding;head={HEAD};new_path=YQ -->",
+        f"<!-- ai-review:v1;kind=summary;status=complete;head={HEAD};location=fallback;new_path=YQ;old_path=Yg;new_line=null;old_line=1 -->",
+        f"<!-- ai-review:v1;kind=finding;head={HEAD};location=fallback;new_path=YR;old_path=Yg;new_line=null;old_line=1 -->",
     ]
 
     assert all(parse_marker(case, OWNER, OWNER) is None for case in cases)
@@ -56,18 +59,30 @@ def test_marker_rejects_more_than_fifty_or_duplicate_covered_ids() -> None:
         OWNER,
     ) is None
     assert parse_marker(
+        f"<!-- ai-review:v1;kind=followup;head={HEAD};covered=,;verdict=fixed -->",
+        OWNER,
+        OWNER,
+    ) is None
+    assert parse_marker(
         f"<!-- ai-review:v1;kind=followup;head={HEAD};covered={too_many};verdict=fixed -->",
         OWNER,
         OWNER,
     ) is None
 
 
+def test_marker_rejects_a_second_malformed_marker_like_fragment() -> None:
+    valid = render_marker(marker())
+
+    assert parse_marker(valid + "\n<!-- ai-review:v1;broken-->", OWNER, OWNER) is None
+
+
 def test_model_marker_is_escaped_and_runtime_marker_is_unique() -> None:
-    result = decorate_ai_message("text <!-- ai-review:v1;kind=summary -->", marker())
+    result = decorate_ai_message("text <!-- ai-review:v1;kind=summary -->\n<!--  AI-REVIEW:x -->", marker())
 
     assert result.startswith("🤖 **AI-ревьювер**")
     assert result.count("<!-- ai-review:v1;") == 1
     assert "&lt;!-- ai-review:v1;kind=summary -->" in result
+    assert "&lt;!-- ai-review:x -->" in result.lower()
 
 
 def test_fallback_location_round_trips_base64url_paths() -> None:

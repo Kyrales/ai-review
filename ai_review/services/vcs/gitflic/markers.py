@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 PREFIX = "🤖 **AI-ревьювер**"
 _MARKER = re.compile(r"<!-- ai-review:([^>]+) -->")
+_MARKER_LIKE = re.compile(r"<!--\s*ai-review:", re.IGNORECASE)
 _ALLOWED_KEYS = {
     "kind", "head", "status", "covered", "verdict", "location",
     "new_path", "old_path", "new_line", "old_line",
@@ -51,6 +52,8 @@ class ReviewMarker(BaseModel):
 
         location_values = (self.new_path, self.old_path, self.new_line, self.old_line)
         if self.location == "fallback":
+            if self.kind is not MarkerKind.FINDING:
+                raise ValueError("fallback location is only valid for finding markers")
             if not self.new_path or not self.old_path or self.new_line is not None:
                 raise ValueError("fallback marker requires paths and no new line")
             if self.old_line is None or self.old_line < 1:
@@ -67,7 +70,10 @@ def _encode_path(path: str) -> str:
 def _decode_path(value: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
         raise ValueError("path must be base64url")
-    return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode()
+    decoded = base64.urlsafe_b64decode(value + "=" * (-len(value) % 4)).decode()
+    if _encode_path(decoded) != value:
+        raise ValueError("path must use canonical base64url")
+    return decoded
 
 
 def render_marker(marker: ReviewMarker) -> str:
@@ -94,7 +100,7 @@ def parse_marker(body: str, author_id: str | int | None, trusted_author_id: str 
     if str(author_id) != str(trusted_author_id):
         return None
     matches = _MARKER.findall(body)
-    if len(matches) != 1:
+    if len(matches) != 1 or len(_MARKER_LIKE.findall(body)) != 1:
         return None
     parts = matches[0].split(";")
     if not parts or parts[0] != "v1":
@@ -108,24 +114,36 @@ def parse_marker(body: str, author_id: str | int | None, trusted_author_id: str 
             return None
         raw[key] = value
     try:
-        covered = tuple(UUID(item) for item in raw.get("covered", "").split(",") if item)
+        covered_raw = raw.get("covered")
+        if covered_raw is None:
+            covered = ()
+        else:
+            covered_parts = covered_raw.split(",")
+            if any(not item for item in covered_parts):
+                return None
+            covered = tuple(UUID(item) for item in covered_parts)
         values: dict[str, object] = {
             "kind": raw["kind"], "head": raw["head"], "covered": covered,
             "status": raw.get("status"), "verdict": raw.get("verdict"),
             "location": raw.get("location"),
         }
+        location_keys = {"new_path", "old_path", "new_line", "old_line"}
         if values["location"]:
+            if location_keys - raw.keys():
+                return None
             values.update({
                 "new_path": _decode_path(raw["new_path"]),
                 "old_path": _decode_path(raw["old_path"]),
                 "new_line": None if raw["new_line"] == "null" else int(raw["new_line"]),
                 "old_line": None if raw["old_line"] == "null" else int(raw["old_line"]),
             })
+        elif location_keys & raw.keys():
+            return None
         return ReviewMarker.model_validate(values)
     except (KeyError, TypeError, ValueError):
         return None
 
 
 def decorate_ai_message(text: str, marker: ReviewMarker) -> str:
-    safe_text = text.replace("<!-- ai-review:", "&lt;!-- ai-review:")
+    safe_text = _MARKER_LIKE.sub("&lt;!-- ai-review:", text)
     return f"{PREFIX}\n\n{safe_text}\n\n{render_marker(marker)}"
