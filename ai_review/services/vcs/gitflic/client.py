@@ -81,6 +81,9 @@ class GitFlicVCSClient(VCSClientProtocol):
     async def create_summary_reply(self, thread_id: int | str, message: str) -> None:
         await self.create_inline_reply(thread_id, message)
 
+    async def resolve_thread(self, thread_id: int | str) -> None:
+        await self.http_client.resolve(self.owner, self.project, self.merge_request_id, str(thread_id))
+
     async def get_inline_threads(self) -> list[ReviewThreadSchema]:
         return [
             ReviewThreadSchema(

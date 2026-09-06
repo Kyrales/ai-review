@@ -115,3 +115,9 @@ class SupportsBatchedComments(Protocol):
 
     async def publish_comments(self) -> None:
         """Publish all comments accumulated in the pending batch."""
+
+
+@runtime_checkable
+class SupportsResolvableThreads(Protocol):
+    async def resolve_thread(self, thread_id: str | int) -> None:
+        """Resolve a native review discussion."""

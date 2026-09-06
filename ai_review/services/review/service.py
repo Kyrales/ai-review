@@ -22,6 +22,7 @@ from ai_review.services.review.runner.inline import InlineReviewRunner
 from ai_review.services.review.runner.inline_reply import InlineReplyReviewRunner
 from ai_review.services.review.runner.summary import SummaryReviewRunner
 from ai_review.services.review.runner.summary_reply import SummaryReplyReviewRunner
+from ai_review.services.review.runner.followup import FollowupReviewRunner
 from ai_review.services.vcs.factory import get_vcs_client
 
 logger = get_logger("REVIEW_SERVICE")
@@ -128,6 +129,7 @@ class ReviewService:
             summary_comment_reply=self.summary_comment_reply,
             review_comment_gateway=self.review_comment_gateway
         )
+        self.followup_review_runner = FollowupReviewRunner(self.vcs, self.review_llm_gateway)
 
     async def __aenter__(self) -> "ReviewService":
         return self
@@ -152,6 +154,9 @@ class ReviewService:
 
     async def run_summary_reply_review(self) -> None:
         await self.summary_reply_review_runner.run()
+
+    async def run_followup_review(self) -> None:
+        await self.followup_review_runner.run()
 
     async def run_clear_inline_review(self) -> None:
         await self.review_comment_gateway.clear_inline_comments()
