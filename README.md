@@ -1,5 +1,8 @@
 # AI Review
 
+> This fork adds a GitFlic VCS provider and an idempotent follow-up review flow.
+> Upstream: https://github.com/Nikita-Filonov/ai-review
+
 <p align="center">
   <img src="./docs/assets/logo.png" alt="Axiom logo" width="220" />
 </p>
