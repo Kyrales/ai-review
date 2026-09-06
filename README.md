@@ -72,6 +72,18 @@ AI Review runs automatically in your CI/CD pipeline and posts both **inline comm
 explore the codebase before reviewing, resulting in more accurate and context-aware feedback. This makes reviews faster,
 more conversational, and still fully under human control.
 
+### GitFlic fork
+
+Set `VCS__PROVIDER=GITFLIC` and provide `VCS__PIPELINE__OWNER`,
+`VCS__PIPELINE__PROJECT`, `VCS__PIPELINE__MERGE_REQUEST_ID`,
+`VCS__HTTP_CLIENT__API_URL`, `VCS__HTTP_CLIENT__API_TOKEN`,
+`AI_REVIEW_BASE_SHA`, `AI_REVIEW_HEAD_SHA`, and `AI_REVIEW_GITFLIC_USER_ID`.
+
+Use `ai-review run-followup` after a developer replies to a finding. It trusts
+only runtime marker metadata published by the configured GitFlic user and
+rechecks a thread before resolving it. Keep source checkouts read-only and
+store YAML configuration and prompts in the protected control pipeline.
+
 ---
 
 ## 🧪 Live Preview
