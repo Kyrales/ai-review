@@ -1,7 +1,9 @@
 import pytest
 
 from ai_review.config import settings
+from ai_review.libs.constants.vcs_provider import VCSProvider
 from ai_review.services.review.runner.inline import InlineReviewRunner
+from ai_review.services.vcs.gitflic.markers import MarkerKind, parse_marker
 from ai_review.services.vcs.types import ReviewInfoSchema, ReviewCommentSchema
 from ai_review.tests.fixtures.services.cost import FakeCostService
 from ai_review.tests.fixtures.services.diff import FakeDiffService
@@ -12,6 +14,26 @@ from ai_review.tests.fixtures.services.review.gateway.review_comment_gateway imp
 from ai_review.tests.fixtures.services.review.gateway.review_direct_llm_gateway import FakeReviewDirectLLMGateway
 from ai_review.tests.fixtures.services.review.internal.inline import FakeInlineCommentService
 from ai_review.tests.fixtures.services.vcs import FakeVCSClient
+
+
+@pytest.mark.asyncio
+async def test_gitflic_finding_gets_trusted_runtime_marker(
+        monkeypatch, inline_review_runner: InlineReviewRunner, fake_git_service,
+        fake_review_comment_gateway, fake_inline_comment_service,
+):
+    monkeypatch.setattr(settings.vcs, "provider", VCSProvider.GITFLIC)
+    fake_git_service.responses["get_diff_for_file"] = "FAKE_DIFF"
+    head = "a" * 40
+
+    await inline_review_runner.process_file("main.py", ReviewInfoSchema(
+        changed_files=["main.py"], base_sha="b" * 40, head_sha=head,
+    ))
+
+    comments = next(call[1]["comments"] for call in fake_review_comment_gateway.calls if call[0] == "process_inline_comments")
+    marker = parse_marker(comments.root[0].message, "owner", "owner")
+    assert marker is not None
+    assert marker.kind is MarkerKind.FINDING
+    assert marker.head == head
 
 
 @pytest.mark.asyncio

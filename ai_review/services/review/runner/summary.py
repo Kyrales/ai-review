@@ -140,6 +140,8 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
                 summary.text,
                 ReviewMarker(kind=MarkerKind.SUMMARY, status=status, head=review_info.head_sha),
             )
-        await self.review_comment_gateway.process_summary_comment(summary)
+        posted = await self.review_comment_gateway.process_summary_comment(summary)
+        if posted is False:
+            raise RuntimeError("Failed to publish terminal GitFlic summary")
         await hook.emit_summary_review_complete(self.cost.aggregate())
 import os

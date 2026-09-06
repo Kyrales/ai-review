@@ -11,6 +11,9 @@ from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol, Re
 from ai_review.services.review.internal.inline.types import InlineCommentServiceProtocol
 from ai_review.services.review.runner.types import ReviewRunnerProtocol
 from ai_review.services.vcs.types import ReviewInfoSchema, VCSClientProtocol
+from ai_review.config import settings
+from ai_review.libs.constants.vcs_provider import VCSProvider
+from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message
 
 logger = get_logger("INLINE_REVIEW_RUNNER")
 
@@ -60,6 +63,14 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         if not comments.root:
             logger.info(f"No inline comments for file: {file}")
             return
+
+        if settings.vcs.provider is VCSProvider.GITFLIC:
+            for comment in comments.root:
+                comment.message = decorate_ai_message(
+                    comment.body,
+                    ReviewMarker(kind=MarkerKind.FINDING, head=review_info.head_sha),
+                )
+                comment.suggestion = None
 
         logger.info(f"Posting {len(comments.root)} inline comments to {file}")
         await self.review_comment_gateway.process_inline_comments(comments)
