@@ -34,3 +34,19 @@ async def test_fixed_does_not_resolve_when_new_reply_arrives(monkeypatch):
     await FollowupReviewRunner(vcs, gateway).run()
 
     vcs.resolve_thread.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pending_resolve_retries_without_llm(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    finding = ReviewCommentSchema(id="root", body=decorate_ai_message("finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)), author=UserSchema(id="owner"))
+    reply = ReviewCommentSchema(id="ai", parent_id="thread", author=UserSchema(id="owner"), body=decorate_ai_message("fixed", ReviewMarker(kind=MarkerKind.FOLLOWUP, head=HEAD, verdict="fixed")))
+    item = thread([finding, reply])
+    vcs = SimpleNamespace(get_inline_threads=AsyncMock(return_value=[item]), create_inline_reply=AsyncMock(), resolve_thread=AsyncMock())
+    gateway = SimpleNamespace(ask=AsyncMock())
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    vcs.resolve_thread.assert_awaited_once_with("thread")
+    gateway.ask.assert_not_awaited()

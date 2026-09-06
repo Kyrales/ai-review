@@ -32,9 +32,18 @@ class FollowupReviewRunner:
                     continue
         return [item for item in human if item not in covered][:50]
 
+    def _last_followup_is_fixed(self, thread: ReviewThreadSchema) -> bool:
+        for comment in reversed(thread.comments):
+            marker = parse_marker(comment.body, comment.author.id, self.author_id)
+            if marker and marker.kind is MarkerKind.FOLLOWUP:
+                return marker.verdict == "fixed"
+        return False
+
     async def _process(self, thread: ReviewThreadSchema) -> None:
         pending = self._pending(thread)
         if not pending:
+            if self._last_followup_is_fixed(thread) and isinstance(self.vcs, SupportsResolvableThreads):
+                await self.vcs.resolve_thread(thread.id)
             return
         prompt = "Проверь ответ разработчика на замечание. Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n" + "\n".join(
             comment.body for comment in thread.comments
