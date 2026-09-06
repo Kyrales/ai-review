@@ -113,7 +113,7 @@ llm:
 
 vcs:
   # Version control system provider.
-  # Options: GITLAB | GITHUB | BITBUCKET_CLOUD | BITBUCKET_SERVER | AZURE_DEVOPS | GITEA
+  # Options: GITLAB | GITHUB | BITBUCKET_CLOUD | BITBUCKET_SERVER | AZURE_DEVOPS | GITEA | GITFLIC
   provider: GITLAB
 
   # --- GitLab only (requires GitLab 15.10+) ---
@@ -156,6 +156,11 @@ vcs:
     # owner: ${GITEA_REPOSITORY_OWNER}  # Repo owner (e.g. "my-org")
     # repo: ${GITEA_REPOSITORY_NAME}    # Repo name  (e.g. "my-service")
     # pull_number: ${PR_NUMBER}         # Pull Request number
+
+    # --- GitFlic ---
+    # owner: ${AI_REVIEW_GITFLIC_OWNER}                         # Project owner (e.g. "my-company")
+    # project: ${AI_REVIEW_GITFLIC_PROJECT}                     # Project slug (e.g. "my-service")
+    # merge_request_id: ${AI_REVIEW_GITFLIC_MERGE_REQUEST_ID}   # Local Merge Request ID (e.g. "42")
 
 
   # HTTP client configuration for VCS.
@@ -200,6 +205,10 @@ vcs:
     # --- Gitea ---
     # api_url: https://gitea.mycompany.com/api/v1
     # api_token: ${GITEA_TOKEN}       # Personal access token or CI token
+
+    # --- GitFlic ---
+    # api_url: ${AI_REVIEW_GITFLIC_API_URL}  # e.g. https://api.gitflic.ru
+    # api_token: ${AI_REVIEW_GITFLIC_TOKEN}  # Personal access token with MR read/write access
 
   # Pagination settings for API calls.
   pagination:

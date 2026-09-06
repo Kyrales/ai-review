@@ -47,10 +47,24 @@ def test_create_discussion_allows_general_comment_without_position() -> None:
 
 
 @pytest.mark.parametrize(
+    "position",
+    [
+        {"newLine": 12, "newPath": "new.py", "oldPath": "old.py"},
+        {"oldLine": 11, "newPath": "new.py", "oldPath": "old.py"},
+    ],
+)
+def test_create_discussion_rejects_partial_position(position: dict[str, object]) -> None:
+    with pytest.raises(ValidationError):
+        GitFlicCreateDiscussion(message="Please fix", **position)
+
+
+@pytest.mark.parametrize(
     ("schema", "payload"),
     [
         ("GitFlicChanges", {"totalAddedLines": 0, "totalRemovedLines": 0, "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0}}),
         ("GitFlicDiscussionsPage", {"_embedded": {}, "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0}}),
+        ("GitFlicChange", {"id": "c", "newPath": "new.py", "oldPath": "old.py", "changeType": "MODIFY"}),
+        ("GitFlicDiscussion", note("d1")),
     ],
 )
 def test_required_response_collections_fail_closed(schema: str, payload: dict[str, object]) -> None:
@@ -206,10 +220,8 @@ async def test_discussion_mutations_use_documented_endpoints_and_payloads() -> N
         "/project/rt-vt/sppr/merge-request/41/discussions/resolve/discussion-1",
         "/project/rt-vt/sppr/merge-request/41/discussions/delete/discussion-1",
     ]
-    assert requests[0].content == (
-        b'{"newLine":12,"oldLine":11,"newPath":"new.py",'
-        b'"oldPath":"old.py","message":"Please fix"}'
-    )
+    assert requests[0].content == (b'{"newLine":12,"oldLine":11,"newPath":"new.py",'
+                                   b'"oldPath":"old.py","message":"Please fix"}')
     assert requests[1].content == b'{"discussionUuid":"discussion-1","message":"Fixed"}'
     assert datetime.fromisoformat("2026-09-06T10:00:00+00:00") == created.createdAt
 

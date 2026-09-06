@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class GitFlicModel(BaseModel):
@@ -43,8 +43,8 @@ class GitFlicChange(GitFlicModel):
     newPath: str
     oldPath: str
     changeType: str
-    headers: list[str] = Field(default_factory=list)
-    lines: list[GitFlicChangeLine] = Field(default_factory=list)
+    headers: list[str]
+    lines: list[GitFlicChangeLine]
     addedLinesCount: int = 0
     removedLinesCount: int = 0
 
@@ -77,7 +77,7 @@ class GitFlicNote(GitFlicModel):
 
 
 class GitFlicDiscussion(GitFlicNote):
-    replies: list[GitFlicNote] = Field(default_factory=list)
+    replies: list[GitFlicNote]
 
 
 class GitFlicCreateDiscussion(GitFlicModel):
@@ -87,6 +87,14 @@ class GitFlicCreateDiscussion(GitFlicModel):
     oldPath: str | None = None
     message: str
 
+    @model_validator(mode="after")
+    def require_complete_position(self) -> "GitFlicCreateDiscussion":
+        position_fields = {"newLine", "oldLine", "newPath", "oldPath"}
+        supplied = position_fields & self.model_fields_set
+        if supplied and supplied != position_fields:
+            raise ValueError("GitFlic discussion position requires all four fields")
+        return self
+
 
 class GitFlicReply(GitFlicModel):
     discussionUuid: str
@@ -95,7 +103,7 @@ class GitFlicReply(GitFlicModel):
 
 class GitFlicDiscussionEnvelope(GitFlicModel):
     rootNote: GitFlicNote
-    replies: list[GitFlicNote] = Field(default_factory=list)
+    replies: list[GitFlicNote]
 
 
 class GitFlicDiscussionsEmbedded(GitFlicModel):
@@ -103,8 +111,5 @@ class GitFlicDiscussionsEmbedded(GitFlicModel):
 
 
 class GitFlicDiscussionsPage(GitFlicModel):
-    embedded: GitFlicDiscussionsEmbedded = Field(
-        default_factory=GitFlicDiscussionsEmbedded,
-        alias="_embedded",
-    )
+    embedded: GitFlicDiscussionsEmbedded = Field(alias="_embedded")
     page: GitFlicPage

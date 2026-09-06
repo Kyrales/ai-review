@@ -20,9 +20,13 @@ def find_position(
     for change in changes:
         if change.newPath != file:
             continue
-        if any(item.op == "ADD" and item.addLineNumber == line for item in change.lines):
+        if any(
+            item.op.lower() in {"add", "replace_add"} and item.addLineNumber == line
+            for item in change.lines
+        ):
             return GitFlicCreateDiscussion(
                 newLine=line,
+                oldLine=None,
                 newPath=change.newPath,
                 oldPath=change.oldPath,
                 message="",

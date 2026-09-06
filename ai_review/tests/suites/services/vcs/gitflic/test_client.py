@@ -39,8 +39,9 @@ def gitflic_http(monkeypatch: pytest.MonkeyPatch):
             createdBy=GitFlicAuthor(id="author", username="dev", fullName="Developer"),
         )),
         get_changes=AsyncMock(return_value=SimpleNamespace(commitBlobs=[GitFlicChange(
-            id="change", newPath="a.bsl", oldPath="a.bsl", changeType="MODIFIED",
-            lines=[GitFlicChangeLine(body="added", addLineNumber=7, op="ADD", type="LINE")],
+                id="change", newPath="a.bsl", oldPath="a.bsl", changeType="MODIFIED",
+                headers=[],
+                lines=[GitFlicChangeLine(body="added", addLineNumber=7, op="add", type="line")],
         )])),
         get_discussions=AsyncMock(return_value=[
             GitFlicDiscussion(**note("inline", path="a.bsl", line=7).model_dump(), replies=[note("reply")]),

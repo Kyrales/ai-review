@@ -10,10 +10,11 @@ def make_change(*, new_path: str = "src/cf/sppr/a.bsl", old_path: str | None = N
         newPath=new_path,
         oldPath=old_path or new_path,
         changeType="MODIFIED",
+        headers=[],
         lines=[
-            GitFlicChangeLine(body="added", addLineNumber=12, op="ADD", type="LINE"),
-            GitFlicChangeLine(body="removed", removeLineNumber=12, op="DELETE", type="LINE"),
-            GitFlicChangeLine(body="context", addLineNumber=13, removeLineNumber=13, op="CONTEXT", type="LINE"),
+            GitFlicChangeLine(body="added", addLineNumber=12, op="add", type="line"),
+            GitFlicChangeLine(body="removed", removeLineNumber=12, op="delete", type="line"),
+            GitFlicChangeLine(body="context", addLineNumber=13, removeLineNumber=13, op="context", type="line"),
         ],
     )
 
@@ -21,11 +22,12 @@ def make_change(*, new_path: str = "src/cf/sppr/a.bsl", old_path: str | None = N
 def test_find_position_for_added_line_contains_all_location_fields():
     position = find_position([make_change()], "src/cf/sppr/a.bsl", 12)
 
-    assert position.model_dump(exclude={"message"}) == {
+    assert position.model_dump() == {
         "newLine": 12,
         "oldLine": None,
         "newPath": "src/cf/sppr/a.bsl",
         "oldPath": "src/cf/sppr/a.bsl",
+        "message": "",
     }
 
 
