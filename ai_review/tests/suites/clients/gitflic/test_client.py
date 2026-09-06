@@ -51,6 +51,7 @@ def test_create_discussion_allows_general_comment_without_position() -> None:
     [
         {"newLine": 12, "newPath": "new.py", "oldPath": "old.py"},
         {"oldLine": 11, "newPath": "new.py", "oldPath": "old.py"},
+        {"newLine": None, "oldLine": None, "newPath": None, "oldPath": None},
     ],
 )
 def test_create_discussion_rejects_partial_position(position: dict[str, object]) -> None:
@@ -243,3 +244,27 @@ async def test_general_discussion_sends_only_message() -> None:
         await client.aclose()
 
     assert requests[0].content == b'{"message":"General comment"}'
+
+
+@pytest.mark.asyncio
+async def test_inline_discussion_sends_nullable_old_line() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, request=request, json=note("inline"))
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        await client.create_discussion(
+            "rt-vt", "sppr", 41, GitFlicCreateDiscussion(
+                newLine=12, oldLine=None, newPath="new.py", oldPath="old.py", message="Inline"
+            )
+        )
+    finally:
+        await client.aclose()
+
+    assert requests[0].content == (
+        b'{"newLine":12,"oldLine":null,"newPath":"new.py",'
+        b'"oldPath":"old.py","message":"Inline"}'
+    )

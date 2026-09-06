@@ -110,7 +110,7 @@ class GitFlicHTTPClient(HTTPClient):
     ) -> GitFlicNote:
         response = await self._post(
             f"{self._mr_path(owner, project, merge_request_id)}/discussions/create",
-            json=request.model_dump(exclude_none=True),
+            json=request.model_dump(exclude_unset=True),
         )
         return GitFlicNote.model_validate_json(response.text)
 
