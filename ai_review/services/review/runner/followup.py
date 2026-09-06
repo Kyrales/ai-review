@@ -25,7 +25,7 @@ class FollowupReviewRunner:
             marker = parse_marker(comment.body, comment.author.id, self.author_id)
             if marker and marker.kind is MarkerKind.FOLLOWUP:
                 covered.update(marker.covered)
-            elif comment.parent_id is not None:
+            elif comment.parent_id is not None and str(comment.author.id) != self.author_id:
                 try:
                     human.append(UUID(str(comment.id)))
                 except ValueError:
@@ -43,7 +43,9 @@ class FollowupReviewRunner:
         pending = self._pending(thread)
         if not pending:
             if self._last_followup_is_fixed(thread) and isinstance(self.vcs, SupportsResolvableThreads):
-                await self.vcs.resolve_thread(thread.id)
+                refreshed = next((item for item in await self.vcs.get_inline_threads() if item.id == thread.id), None)
+                if refreshed is not None and not self._pending(refreshed):
+                    await self.vcs.resolve_thread(thread.id)
             return
         prompt = "Проверь ответ разработчика на замечание. Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n" + "\n".join(
             comment.body for comment in thread.comments
