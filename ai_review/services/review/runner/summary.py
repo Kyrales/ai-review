@@ -10,6 +10,9 @@ from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol, Re
 from ai_review.services.review.internal.summary.types import SummaryCommentServiceProtocol
 from ai_review.services.review.runner.types import ReviewRunnerProtocol
 from ai_review.services.vcs.types import VCSClientProtocol
+from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message
+from ai_review.config import settings
+from ai_review.libs.constants.vcs_provider import VCSProvider
 
 logger = get_logger("SUMMARY_REVIEW_RUNNER")
 
@@ -46,6 +49,21 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
             return
 
         review_info = await self.vcs.get_review_info()
+        inline_comments = await self.review_comment_gateway.get_inline_comments()
+        if inline_comments and settings.vcs.provider is VCSProvider.GITFLIC:
+            summary = self.summary_comment.parse_model_output(
+                "Initial review was partially recovered: previously published findings were kept; "
+                "the remaining inline review was not regenerated."
+            )
+            marker = ReviewMarker(
+                kind=MarkerKind.SUMMARY,
+                status="complete_with_partial_recovery",
+                head=review_info.head_sha,
+            )
+            summary.text = decorate_ai_message(summary.text, marker)
+            await self.review_comment_gateway.process_summary_comment(summary)
+            await hook.emit_summary_review_complete(self.cost.aggregate())
+            return
         changed_files = self.policy.apply_for_files(review_info.changed_files)
         if not changed_files:
             logger.info("No files to review for summary")
