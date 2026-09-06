@@ -40,6 +40,26 @@ def test_note_schema_rejects_wrong_field_types() -> None:
         GitFlicNote.model_validate(invalid)
 
 
+def test_create_discussion_allows_general_comment_without_position() -> None:
+    request = GitFlicCreateDiscussion(message="General comment")
+
+    assert request.model_dump(exclude_none=True) == {"message": "General comment"}
+
+
+@pytest.mark.parametrize(
+    ("schema", "payload"),
+    [
+        ("GitFlicChanges", {"totalAddedLines": 0, "totalRemovedLines": 0, "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0}}),
+        ("GitFlicDiscussionsPage", {"_embedded": {}, "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0}}),
+    ],
+)
+def test_required_response_collections_fail_closed(schema: str, payload: dict[str, object]) -> None:
+    from ai_review.clients.gitflic import schema as gitflic_schema
+
+    with pytest.raises(ValidationError):
+        getattr(gitflic_schema, schema).model_validate(payload)
+
+
 @pytest.mark.asyncio
 async def test_client_sends_token_only_in_authorization_header() -> None:
     captured: httpx.Request | None = None
@@ -192,3 +212,22 @@ async def test_discussion_mutations_use_documented_endpoints_and_payloads() -> N
     )
     assert requests[1].content == b'{"discussionUuid":"discussion-1","message":"Fixed"}'
     assert datetime.fromisoformat("2026-09-06T10:00:00+00:00") == created.createdAt
+
+
+@pytest.mark.asyncio
+async def test_general_discussion_sends_only_message() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, request=request, json=note("general"))
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        await client.create_discussion(
+            "rt-vt", "sppr", 41, GitFlicCreateDiscussion(message="General comment")
+        )
+    finally:
+        await client.aclose()
+
+    assert requests[0].content == b'{"message":"General comment"}'

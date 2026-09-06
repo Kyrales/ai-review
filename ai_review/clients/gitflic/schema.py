@@ -57,7 +57,7 @@ class GitFlicPage(GitFlicModel):
 
 
 class GitFlicChanges(GitFlicModel):
-    commitBlobs: list[GitFlicChange] = Field(default_factory=list)
+    commitBlobs: list[GitFlicChange]
     totalAddedLines: int = 0
     totalRemovedLines: int = 0
     page: GitFlicPage
@@ -81,10 +81,10 @@ class GitFlicDiscussion(GitFlicNote):
 
 
 class GitFlicCreateDiscussion(GitFlicModel):
-    newLine: int | None
-    oldLine: int | None
-    newPath: str | None
-    oldPath: str | None
+    newLine: int | None = None
+    oldLine: int | None = None
+    newPath: str | None = None
+    oldPath: str | None = None
     message: str
 
 
@@ -99,7 +99,7 @@ class GitFlicDiscussionEnvelope(GitFlicModel):
 
 
 class GitFlicDiscussionsEmbedded(GitFlicModel):
-    restDiscussionModelList: list[GitFlicDiscussionEnvelope] = Field(default_factory=list)
+    restDiscussionModelList: list[GitFlicDiscussionEnvelope]
 
 
 class GitFlicDiscussionsPage(GitFlicModel):
