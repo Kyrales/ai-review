@@ -1,3 +1,5 @@
+import os
+
 from ai_review.libs.logger import get_logger
 from ai_review.services.cost.types import CostServiceProtocol
 from ai_review.services.diff.types import DiffServiceProtocol
@@ -144,4 +146,3 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
         if posted is False:
             raise RuntimeError("Failed to publish terminal GitFlic summary")
         await hook.emit_summary_review_complete(self.cost.aggregate())
-import os

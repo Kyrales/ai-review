@@ -5,7 +5,6 @@ from ai_review.services.vcs.bitbucket_cloud.client import BitbucketCloudVCSClien
 from ai_review.services.vcs.bitbucket_server.client import BitbucketServerVCSClient
 from ai_review.services.vcs.factory import get_vcs_client
 from ai_review.services.vcs.gitea.client import GiteaVCSClient
-from ai_review.services.vcs.gitflic.client import GitFlicVCSClient
 from ai_review.services.vcs.github.client import GitHubVCSClient
 from ai_review.services.vcs.gitlab.client import GitLabVCSClient
 
