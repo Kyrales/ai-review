@@ -93,8 +93,11 @@ class GitFlicCreateDiscussion(GitFlicModel):
         supplied = position_fields & self.model_fields_set
         if supplied and supplied != position_fields:
             raise ValueError("GitFlic discussion position requires all four fields")
-        if supplied and (self.newLine is None or self.newPath is None or self.oldPath is None):
-            raise ValueError("GitFlic discussion position requires newLine, newPath and oldPath")
+        if supplied and (
+            self.newLine is None or self.oldLine is None
+            or self.newPath is None or self.oldPath is None
+        ):
+            raise ValueError("GitFlic discussion position cannot contain null fields")
         return self
 
 

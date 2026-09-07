@@ -24,11 +24,26 @@ def test_find_position_for_added_line_contains_all_location_fields():
 
     assert position.model_dump() == {
         "newLine": 12,
-        "oldLine": None,
+        "oldLine": 0,
         "newPath": "src/cf/sppr/a.bsl",
         "oldPath": "src/cf/sppr/a.bsl",
         "message": "",
     }
+
+
+def test_find_position_preserves_old_line_for_replaced_line():
+    change = make_change()
+    change.lines[0] = GitFlicChangeLine(
+        body="replacement",
+        addLineNumber=12,
+        removeLineNumber=11,
+        op="replace_add",
+        type="line",
+    )
+
+    position = find_position([change], "src/cf/sppr/a.bsl", 12)
+
+    assert position.oldLine == 11
 
 
 def test_find_position_rejects_deleted_and_context_lines():
