@@ -7,6 +7,7 @@ on:
 permissions:
   contents: read
   packages: write
+  id-token: write
 
 jobs:
   publish:
@@ -25,6 +26,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
       - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
         with:
           push: false
@@ -44,9 +46,15 @@ jobs:
           -e ARTIFACTS__RUN_DIR=/artifacts/run
           ai-review-gitflic:ci run-followup --help
       - name: Publish verified image
+        id: publish
         run: |
           docker tag ai-review-gitflic:ci ghcr.io/kyrales/ai-review:latest
           docker push ghcr.io/kyrales/ai-review:latest
+          published_ref=$(docker image inspect ghcr.io/kyrales/ai-review:latest --format '{{index .RepoDigests 0}}')
+          case "$published_ref" in ghcr.io/kyrales/ai-review@sha256:*) ;; *) exit 1 ;; esac
+          echo "published_ref=$published_ref" >> "$GITHUB_OUTPUT"
+      - name: Sign published digest
+        run: cosign sign --yes "${{ steps.publish.outputs.published_ref }}"
       - name: Verify anonymous image pull
         run: |
           docker logout ghcr.io

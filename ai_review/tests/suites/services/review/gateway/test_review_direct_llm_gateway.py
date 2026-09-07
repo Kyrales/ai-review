@@ -29,7 +29,7 @@ async def test_ask_happy_path(
 
 
 @pytest.mark.asyncio
-async def test_ask_warns_on_empty_response(
+async def test_ask_rejects_empty_response(
         capsys: pytest.CaptureFixture,
         review_direct_llm_gateway: ReviewDirectLLMGateway,
         fake_llm_client: FakeLLMClient,
@@ -39,15 +39,15 @@ async def test_ask_warns_on_empty_response(
     """Should warn if LLM returns an empty response."""
     fake_llm_client.responses["chat"] = ChatResultSchema(text="")
 
-    result = await review_direct_llm_gateway.ask("PROMPT", "SYSTEM_PROMPT")
+    with pytest.raises(RuntimeError, match="empty response"):
+        await review_direct_llm_gateway.ask("PROMPT", "SYSTEM_PROMPT")
     output = capsys.readouterr().out
 
-    assert result == ""
     assert "LLM returned an empty response" in output
 
     assert any(call[0] == "chat" for call in fake_llm_client.calls)
-    assert any(call[0] == "calculate" for call in fake_cost_service.calls)
-    assert any(call[0] == "save_llm" for call in fake_artifacts_service.calls)
+    assert not any(call[0] == "calculate" for call in fake_cost_service.calls)
+    assert not any(call[0] == "save_llm" for call in fake_artifacts_service.calls)
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_ask_passes_llm_tokens_to_calculate(
 
 
 @pytest.mark.asyncio
-async def test_ask_handles_llm_error(
+async def test_ask_propagates_llm_error(
         capsys: pytest.CaptureFixture,
         fake_llm_client: FakeLLMClient,
         review_direct_llm_gateway: ReviewDirectLLMGateway,
@@ -83,9 +83,9 @@ async def test_ask_handles_llm_error(
 
     fake_llm_client.chat = failing_chat
 
-    result = await review_direct_llm_gateway.ask("PROMPT", "SYSTEM_PROMPT")
+    with pytest.raises(RuntimeError, match="LLM connection failed"):
+        await review_direct_llm_gateway.ask("PROMPT", "SYSTEM_PROMPT")
     output = capsys.readouterr().out
 
-    assert result is None
     assert "LLM request failed" in output
     assert "RuntimeError" in output

@@ -89,8 +89,8 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
                 inline_comments, MarkerKind.FINDING, review_info.head_sha,
         ):
             await self.post_terminal_summary(
-                "Initial review was partially recovered: previously published findings were kept; "
-                "the remaining inline review was not regenerated.",
+                "Первичное ревью восстановлено частично: ранее опубликованные замечания сохранены, "
+                "оставшаяся часть inline-ревью повторно не создавалась.",
                 status="complete_with_partial_recovery",
                 head_sha=review_info.head_sha,
             )
@@ -101,7 +101,7 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
             logger.info("No files to review for summary")
             if settings.vcs.provider is VCSProvider.GITFLIC:
                 await self.post_terminal_summary(
-                    "No reviewable changes were found.",
+                    "Изменений, подходящих для автоматического ревью, не найдено.",
                     status="complete",
                     head_sha=review_info.head_sha,
                 )
@@ -123,20 +123,13 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
 
         summary = self.summary_comment.parse_model_output(prompt_result)
         if not summary.text.strip():
-            logger.warning("Summary LLM output was empty, skipping comment")
-            if settings.vcs.provider is VCSProvider.GITFLIC:
-                await self.post_terminal_summary(
-                    "The summary model returned an empty response; inline findings, if any, were preserved.",
-                    status="complete_with_warnings",
-                    head_sha=review_info.head_sha,
-                )
-                await hook.emit_summary_review_complete(self.cost.aggregate())
-            return
+            logger.error("Summary LLM output was empty")
+            raise RuntimeError("LLM returned an empty summary")
 
         logger.info(f"Posting summary review comment ({len(summary.text)} chars)")
         if settings.vcs.provider is VCSProvider.GITFLIC:
             status = "complete_with_warnings" if getattr(
-                self.review_comment_gateway, "inline_publication_failures", 0,
+                self.review_comment_gateway, "inline_publication_warnings", 0,
             ) else "complete"
             summary.text = decorate_ai_message(
                 summary.text,

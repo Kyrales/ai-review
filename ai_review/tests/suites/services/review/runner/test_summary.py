@@ -79,7 +79,7 @@ async def test_run_skips_when_no_changed_files(
 
 
 @pytest.mark.asyncio
-async def test_run_skips_when_empty_summary_from_llm(
+async def test_run_fails_when_parsed_summary_is_empty(
         summary_review_runner: SummaryReviewRunner,
         fake_review_comment_gateway: FakeReviewCommentGateway,
         fake_summary_comment_service: FakeSummaryCommentService,
@@ -89,7 +89,8 @@ async def test_run_skips_when_empty_summary_from_llm(
     fake_review_comment_gateway.responses["get_summary_comments"] = []
     fake_summary_comment_service.responses["parse_model_output"] = SummaryCommentSchema(text="")
 
-    await summary_review_runner.run()
+    with pytest.raises(RuntimeError, match="empty summary"):
+        await summary_review_runner.run()
 
     assert any(call[0] == "ask" for call in fake_review_direct_llm_gateway.calls)
     assert not any(call[0] == "process_summary_comment" for call in fake_review_comment_gateway.calls)

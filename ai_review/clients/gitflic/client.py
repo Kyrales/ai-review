@@ -1,6 +1,6 @@
 from urllib.parse import quote
 
-from httpx import AsyncBaseTransport, AsyncClient, Response
+from httpx import AsyncBaseTransport, AsyncClient, AsyncHTTPTransport, Response
 
 from ai_review.clients.gitflic.schema import (
     GitFlicChanges,
@@ -14,6 +14,8 @@ from ai_review.clients.gitflic.schema import (
 from ai_review.config import settings
 from ai_review.libs.http.client import HTTPClient
 from ai_review.libs.http.handlers import HTTPClientError, handle_http_error
+from ai_review.libs.http.transports.retry import NO_RETRY, RetryTransport
+from ai_review.libs.logger import get_logger
 
 
 class GitFlicHTTPClientError(HTTPClientError):
@@ -22,12 +24,17 @@ class GitFlicHTTPClientError(HTTPClientError):
 
 class GitFlicHTTPClient(HTTPClient):
     def __init__(self, transport: AsyncBaseTransport | None = None) -> None:
+        retry_transport = RetryTransport(
+            logger=get_logger("GITFLIC_HTTP_CLIENT"),
+            transport=transport or AsyncHTTPTransport(verify=settings.vcs.http_client.verify),
+            max_retries=3,
+        )
         http = AsyncClient(
             base_url=settings.vcs.http_client.api_url_value.rstrip("/"),
             headers={"Authorization": f"token {settings.vcs.http_client.api_token_value}"},
             timeout=settings.vcs.http_client.timeout,
             verify=settings.vcs.http_client.verify,
-            transport=transport,
+            transport=retry_transport,
         )
         super().__init__(client=http)
         self.http = http
@@ -44,7 +51,7 @@ class GitFlicHTTPClient(HTTPClient):
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
     async def _post(self, url: str, *, json: dict[str, object] | None = None) -> Response:
-        return await self.client.post(url, json=json)
+        return await self.client.request("POST", url, json=json, extensions=NO_RETRY)
 
     async def get_mr(self, owner: str, project: str, merge_request_id: int) -> GitFlicMergeRequest:
         response = await self._get(self._mr_path(owner, project, merge_request_id))

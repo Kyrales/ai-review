@@ -1,0 +1,25 @@
+agent:
+  enabled: false
+core:
+  concurrency: 4
+review:
+  mode: ADDED_AND_REMOVED_WITH_CONTEXT
+  context_lines: 12
+  max_inline_comments: 20
+  inline_comment_fallback: true
+  allow_changes: ["src/cf/sppr/**", "src/cfe/YAXUNIT/**", "doc/**/*.md", "*.md"]
+  ignore_changes: ["**/Help/**", "**/Pictures/**", "**/*.png", "**/*.jpg", "**/*.gif", "**/*.pdf", "**/*.epf", "**/*.erf", "build/**"]
+prompt:
+  inline_prompt_files: [/opt/ai-review-ci/sppr/prompts/inline.md]
+  context_prompt_files: [/opt/ai-review-ci/sppr/prompts/context.md]
+  summary_prompt_files: [/opt/ai-review-ci/sppr/prompts/summary.md]
+  inline_reply_prompt_files: [/opt/ai-review-ci/sppr/prompts/followup.md]
+  include_inline_system_prompts: true
+  include_context_system_prompts: true
+  include_summary_system_prompts: true
+  include_inline_reply_system_prompts: true
+artifacts:
+  llm_dir: /artifacts/llm
+  vcs_dir: /artifacts/vcs
+  llm_enabled: true
+  vcs_enabled: true

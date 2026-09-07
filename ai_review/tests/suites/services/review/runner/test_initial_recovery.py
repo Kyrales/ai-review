@@ -107,7 +107,7 @@ async def test_normal_summary_is_marked_terminal_for_gitflic(
 
 
 @pytest.mark.asyncio
-async def test_empty_summary_is_terminal_with_warning_for_gitflic(
+async def test_empty_summary_is_not_terminal_for_gitflic(
         monkeypatch, summary_review_runner, fake_vcs_client, fake_review_comment_gateway,
         fake_summary_comment_service,
 ):
@@ -118,11 +118,10 @@ async def test_empty_summary_is_terminal_with_warning_for_gitflic(
     fake_review_comment_gateway.responses.update({"get_summary_comments": [], "get_inline_comments": []})
     fake_summary_comment_service.responses["parse_model_output"] = SummaryCommentSchema(text="")
 
-    await summary_review_runner.run()
+    with pytest.raises(RuntimeError, match="empty summary"):
+        await summary_review_runner.run()
 
-    marker = _terminal_marker(fake_review_comment_gateway)
-    assert marker is not None
-    assert marker.status == "complete_with_warnings"
+    assert not any(call[0] == "process_summary_comment" for call in fake_review_comment_gateway.calls)
 
 
 @pytest.mark.asyncio
@@ -134,7 +133,7 @@ async def test_inline_publication_failure_marks_terminal_summary_with_warning(
         changed_files=["file.py"], base_sha="b" * 40, head_sha=HEAD,
     )
     fake_review_comment_gateway.responses.update({"get_summary_comments": [], "get_inline_comments": []})
-    fake_review_comment_gateway.inline_publication_failures = 1
+    fake_review_comment_gateway.inline_publication_warnings = 1
 
     await summary_review_runner.run()
 

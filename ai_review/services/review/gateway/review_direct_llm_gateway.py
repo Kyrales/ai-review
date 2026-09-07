@@ -28,6 +28,7 @@ class ReviewDirectLLMGateway(ReviewLLMGatewayProtocol):
                 logger.warning(
                     f"LLM returned an empty response (prompt length={len(prompt)} chars)"
                 )
+                raise RuntimeError("LLM returned an empty response")
 
             report = self.cost.calculate(
                 CalculateCostSchema(
@@ -50,3 +51,4 @@ class ReviewDirectLLMGateway(ReviewLLMGatewayProtocol):
         except Exception as error:
             logger.exception(f"LLM request failed: {error}")
             await hook.emit_chat_error(prompt, prompt_system)
+            raise
