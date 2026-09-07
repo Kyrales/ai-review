@@ -11,7 +11,8 @@ def bash_path(path: Path | str) -> str:
     path = Path(path).resolve()
     if not path.drive:
         return path.as_posix()
-    return f"/mnt/{path.drive[0].lower()}{str(path)[2:].replace('\\', '/')}"
+    suffix = str(path)[2:].replace("\\", "/")
+    return f"/mnt/{path.drive[0].lower()}{suffix}"
 
 
 def run_runtime(script: str, *, input: str | None = None) -> subprocess.CompletedProcess[str]:
