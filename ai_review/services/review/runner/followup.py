@@ -2,6 +2,7 @@ import os
 from uuid import UUID
 
 from ai_review.libs.llm.output_json_parser import LLMOutputJSONParser
+from ai_review.services.git.types import GitServiceProtocol
 from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol
 from ai_review.services.review.internal.followup.schema import FollowupReply
 from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message, parse_marker
@@ -11,9 +12,15 @@ from ai_review.services.vcs.types import ReviewThreadSchema, SupportsResolvableT
 class FollowupReviewRunner:
     """Safely handles only replies that appeared after the last trusted AI follow-up."""
 
-    def __init__(self, vcs: VCSClientProtocol, review_llm_gateway: ReviewLLMGatewayProtocol):
+    def __init__(
+        self,
+        vcs: VCSClientProtocol,
+        review_llm_gateway: ReviewLLMGatewayProtocol,
+        git: GitServiceProtocol | None = None,
+    ):
         self.vcs = vcs
         self.review_llm_gateway = review_llm_gateway
+        self.git = git
         self.parser = LLMOutputJSONParser(model=FollowupReply)
         self.author_id = os.environ.get("AI_REVIEW_GITFLIC_USER_ID", "")
         self.head = os.environ.get("AI_REVIEW_HEAD_SHA", "")
@@ -39,6 +46,29 @@ class FollowupReviewRunner:
                 return marker.verdict == "fixed"
         return False
 
+    async def _build_prompt(self, thread: ReviewThreadSchema) -> str:
+        discussion = "\n\n".join(comment.body[:4000] for comment in thread.comments)
+        code_context = ""
+        if self.git is not None and thread.file:
+            review_info = await self.vcs.get_review_info()
+            diff = self.git.get_diff_for_file(
+                review_info.base_sha, review_info.head_sha, thread.file, unified=20,
+            )[:12000]
+            current = self.git.get_file_at_commit(thread.file, review_info.head_sha) or ""
+            lines = current.splitlines()
+            line = max(thread.line or 1, 1)
+            start = max(line - 21, 0)
+            end = min(line + 20, len(lines))
+            excerpt = "\n".join(
+                f"{number + 1}: {lines[number]}" for number in range(start, end)
+            )[:12000]
+            code_context = f"\n\nАктуальный diff:\n{diff}\n\nАктуальный код:\n{excerpt}"
+        return (
+            "Проверь ответ разработчика на замечание по фактическому актуальному коду. "
+            "Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n"
+            f"Обсуждение:\n{discussion}{code_context}"
+        )
+
     async def _process(self, thread: ReviewThreadSchema) -> None:
         pending = self._pending(thread)
         if not pending:
@@ -47,11 +77,7 @@ class FollowupReviewRunner:
                 if refreshed is not None and not self._pending(refreshed) and self._last_followup_is_fixed(refreshed):
                     await self.vcs.resolve_thread(thread.id)
             return
-        selected_ids = {str(item) for item in pending}
-        context = [thread.comments[0].body] + [
-            comment.body for comment in thread.comments[1:] if str(comment.id) in selected_ids
-        ]
-        prompt = "Проверь ответ разработчика на замечание. Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n" + "\n".join(context)
+        prompt = await self._build_prompt(thread)
         result = self.parser.parse_output(await self.review_llm_gateway.ask(prompt, "Ты AI-ревьювер."))
         if not result:
             return

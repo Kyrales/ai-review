@@ -129,7 +129,7 @@ class ReviewService:
             summary_comment_reply=self.summary_comment_reply,
             review_comment_gateway=self.review_comment_gateway
         )
-        self.followup_review_runner = FollowupReviewRunner(self.vcs, self.review_llm_gateway)
+        self.followup_review_runner = FollowupReviewRunner(self.vcs, self.review_llm_gateway, self.git)
 
     async def __aenter__(self) -> "ReviewService":
         return self

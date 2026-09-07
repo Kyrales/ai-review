@@ -80,3 +80,46 @@ async def test_unmarked_reply_from_token_owner_is_treated_as_human(monkeypatch):
     await FollowupReviewRunner(vcs, gateway).run()
 
     vcs.create_inline_reply.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_followup_prompt_contains_current_code_and_diff(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    finding = ReviewCommentSchema(
+        id="root",
+        file="module.py",
+        line=2,
+        body=decorate_ai_message("finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)),
+        author=UserSchema(id="owner"),
+    )
+    reply = ReviewCommentSchema(
+        id="12345678-1234-1234-1234-123456789abc",
+        parent_id="thread",
+        author=UserSchema(id="developer"),
+        body="Исправил",
+    )
+    item = ReviewThreadSchema(
+        id="thread", kind=ThreadKind.INLINE, file="module.py", line=2, comments=[finding, reply]
+    )
+    vcs = SimpleNamespace(
+        get_inline_threads=AsyncMock(side_effect=[[item], [item]]),
+        get_review_info=AsyncMock(
+            return_value=SimpleNamespace(base_sha="b" * 40, head_sha=HEAD)
+        ),
+        create_inline_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    git = SimpleNamespace(
+        get_diff_for_file=lambda *_args, **_kwargs: "UNIQUE_DIFF",
+        get_file_at_commit=lambda *_args, **_kwargs: "line 1\nUNIQUE_CURRENT_CODE\nline 3",
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(return_value='{"verdict":"open","message":"Проверено"}')
+    )
+
+    await FollowupReviewRunner(vcs, gateway, git=git).run()
+
+    prompt = gateway.ask.await_args.args[0]
+    assert "UNIQUE_DIFF" in prompt
+    assert "UNIQUE_CURRENT_CODE" in prompt
