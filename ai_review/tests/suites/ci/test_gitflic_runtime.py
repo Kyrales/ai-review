@@ -52,6 +52,8 @@ def test_sppr_runtime_config_uses_embedded_russian_prompts():
 
     assert "/opt/ai-review-ci/sppr/prompts/inline.md" in config
     assert "Проведи ревью" in prompt
+    assert "llm_enabled: false" in config
+    assert "vcs_enabled: false" in config
 
 
 def test_publish_workflow_keylessly_signs_published_digest():
