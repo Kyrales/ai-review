@@ -139,3 +139,20 @@ def test_parse_preserves_standalone_carriage_return_inside_diff_record() -> None
     ]
     assert len(hunk.orig_range.lines) == hunk.orig_range.length == 1
     assert len(hunk.new_range.lines) == hunk.new_range.length == 1
+
+
+def test_parse_git_quoted_utf8_paths() -> None:
+    """Git C-quoted UTF-8 paths must match the Unicode path returned by a VCS API."""
+    raw_diff = r'''diff --git "a/src/\320\242\320\265\321\201\321\202/Module.bsl" "b/src/\320\242\320\265\321\201\321\202/Module.bsl"
+index 0000000..1111111 100644
+--- "a/src/\320\242\320\265\321\201\321\202/Module.bsl"
++++ "b/src/\320\242\320\265\321\201\321\202/Module.bsl"
+@@ -1,1 +1,1 @@
+-old
++new
+'''
+
+    file = parse_and_get_file(raw_diff)
+
+    assert file.orig_name == "src/Тест/Module.bsl"
+    assert file.new_name == "src/Тест/Module.bsl"
