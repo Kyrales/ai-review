@@ -25,7 +25,7 @@ class FollowupReviewRunner:
             marker = parse_marker(comment.body, comment.author.id, self.author_id)
             if marker and marker.kind is MarkerKind.FOLLOWUP:
                 covered.update(marker.covered)
-            elif comment.parent_id is not None and str(comment.author.id) != self.author_id:
+            elif comment.parent_id is not None:
                 try:
                     human.append(UUID(str(comment.id)))
                 except ValueError:
