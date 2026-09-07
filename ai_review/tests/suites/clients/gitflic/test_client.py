@@ -51,6 +51,7 @@ def test_create_discussion_allows_general_comment_without_position() -> None:
     [
         {"newLine": 12, "newPath": "new.py", "oldPath": "old.py"},
         {"oldLine": 11, "newPath": "new.py", "oldPath": "old.py"},
+        {"newLine": 12, "oldLine": 0, "newPath": "new.py", "oldPath": "old.py"},
         {"newLine": None, "oldLine": 0, "newPath": "new.py", "oldPath": "old.py"},
         {"newLine": 12, "oldLine": None, "newPath": "new.py", "oldPath": "old.py"},
         {"newLine": 12, "oldLine": 0, "newPath": None, "oldPath": "old.py"},
@@ -339,7 +340,7 @@ async def test_general_discussion_sends_only_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inline_discussion_sends_zero_old_line_for_added_file() -> None:
+async def test_inline_discussion_sends_positive_old_line_for_added_file() -> None:
     requests: list[httpx.Request] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -350,13 +351,13 @@ async def test_inline_discussion_sends_zero_old_line_for_added_file() -> None:
     try:
         await client.create_discussion(
             "rt-vt", "sppr", 41, GitFlicCreateDiscussion(
-                newLine=12, oldLine=0, newPath="new.py", oldPath="old.py", message="Inline"
+                newLine=12, oldLine=12, newPath="new.py", oldPath="/dev/null", message="Inline"
             )
         )
     finally:
         await client.aclose()
 
     assert requests[0].content == (
-        b'{"newLine":12,"oldLine":0,"newPath":"new.py",'
-        b'"oldPath":"old.py","message":"Inline"}'
+        b'{"newLine":12,"oldLine":12,"newPath":"new.py",'
+        b'"oldPath":"/dev/null","message":"Inline"}'
     )

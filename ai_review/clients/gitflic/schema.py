@@ -98,6 +98,8 @@ class GitFlicCreateDiscussion(GitFlicModel):
             or self.newPath is None or self.oldPath is None
         ):
             raise ValueError("GitFlic discussion position cannot contain null fields")
+        if supplied and (self.newLine < 1 or self.oldLine < 1):
+            raise ValueError("GitFlic discussion line numbers must be positive")
         return self
 
 
