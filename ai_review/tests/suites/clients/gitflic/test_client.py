@@ -186,6 +186,30 @@ async def test_get_discussions_does_not_hide_http_errors(status_code: int) -> No
 
 
 @pytest.mark.asyncio
+async def test_http_error_does_not_expose_response_body_or_arbitrary_headers() -> None:
+    secret = "response-secret-must-not-be-logged"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            500,
+            request=request,
+            text=secret,
+            headers={"x-request-id": "safe-request-42", "x-private": secret},
+        )
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicHTTPClientError) as error:
+            await client.get_discussions("rt-vt", "sppr", 41)
+    finally:
+        await client.aclose()
+
+    assert secret not in str(error.value)
+    assert secret not in error.value.details
+    assert error.value.request_id == "safe-request-42"
+
+
+@pytest.mark.asyncio
 async def test_gitflic_get_retries_rate_limit() -> None:
     attempts = 0
 

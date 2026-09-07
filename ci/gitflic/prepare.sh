@@ -16,9 +16,27 @@ branch_re='^[A-Za-z0-9._/-]+$'
 runtime=/runtime
 artifacts=/artifacts
 repo_url=https://gitflic.ru/project/rt-vt/sppr.git
+api_url=https://api.gitflic.ru/project/rt-vt/sppr/merge-request/
+credential_canary=${AI_REVIEW_GITFLIC_TOKEN}
+. "$(dirname "$0")/runtime.sh"
+
+validate_https_url "$repo_url" 'https://gitflic.ru/project/rt-vt/sppr.git'
+validate_https_url "$api_url" 'https://api.gitflic.ru/project/rt-vt/sppr/merge-request/'
 mkdir -p "$runtime/cache" "$runtime/work" "$runtime/locks" "$artifacts/run"
 chmod 700 "$runtime/cache" "$runtime/work" "$runtime/locks" "$artifacts/run"
 [[ $(realpath "$runtime") == /runtime ]] || { echo 'invalid runtime mount' >&2; exit 2; }
+
+askpass=
+fetch_log=
+canary_file=
+install_cleanup_traps
+
+exec 8>"$runtime/locks/maintenance.lock"
+flock -w 30 8 || { echo 'maintenance lock timeout' >&2; exit 3; }
+work_ttl=${AI_REVIEW_WORK_TTL_SECONDS:-86400}
+[[ "$work_ttl" =~ ^[1-9][0-9]*$ ]] || { echo 'invalid work TTL' >&2; exit 2; }
+cleanup_expired_workdirs "$runtime/work" "$work_ttl"
+flock -u 8
 
 mapfile -t mr_state < <(python3 - <<'PY'
 import json, os, time, urllib.error, urllib.request
@@ -57,35 +75,26 @@ target_sha=${mr_state[0]}
 cache="$runtime/cache/sppr.git"
 exec 7>"$runtime/locks/cache.lock"
 flock -w 300 7 || { echo 'cache lock timeout' >&2; exit 3; }
-cache_state=hit
-if ! git --git-dir="$cache" rev-parse --is-bare-repository >/dev/null 2>&1 ||
-   ! git --git-dir="$cache" fsck --connectivity-only --no-dangling >/dev/null 2>&1; then
-  [[ -e "$cache" ]] && cache_state=rebuilt || cache_state=miss
-  replacement=$(mktemp -d "$runtime/cache/sppr.git.new-XXXXXXXX")
-  git init --quiet --bare "$replacement"
-  if [[ -e "$cache" ]]; then
-    stale="$runtime/cache/sppr.git.stale-$(date +%s)"
-    mv -- "$cache" "$stale"
-  fi
-  mv -- "$replacement" "$cache"
-fi
+ensure_cache "$cache"
 
 askpass=$(mktemp "$runtime/work/ai-review-askpass-XXXXXXXX")
-cleanup_auth() { rm -f -- "$askpass"; }
-trap cleanup_auth EXIT HUP INT TERM
+fetch_log=$(mktemp "$runtime/work/ai-review-fetch-XXXXXXXX")
 printf '%s\n' '#!/bin/sh' 'case "$1" in *Username*) printf "%s\\n" "${AI_REVIEW_GITFLIC_USERNAME:-karataev-oa}";; *) printf "%s\\n" "$AI_REVIEW_GITFLIC_TOKEN";; esac' >"$askpass"
 chmod 700 "$askpass"
 for attempt in 1 2 3; do
-  if GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 git --git-dir="$cache" fetch --quiet --force --no-tags "$repo_url" \
-    "+refs/heads/$AI_REVIEW_SOURCE_BRANCH:refs/ai-review/source" \
-    "+refs/heads/$AI_REVIEW_TARGET_BRANCH:refs/ai-review/target"; then
+  if GIT_ASKPASS="$askpass" GIT_TERMINAL_PROMPT=0 fetch_refs "$cache" "$repo_url" "$AI_REVIEW_SOURCE_BRANCH" "$AI_REVIEW_TARGET_BRANCH" 2>"$fetch_log"; then
     break
   fi
   [[ "$attempt" -lt 3 ]] || { echo 'repository fetch failed after retries' >&2; exit 3; }
   sleep $((2 ** (attempt - 1)))
 done
-cleanup_auth
-trap - EXIT HUP INT TERM
+if ! scan_credential_canary "$credential_canary" "$artifacts"; then
+  exit 5
+fi
+cleanup
+askpass=
+fetch_log=
+canary_file=
 
 source_sha=$(git --git-dir="$cache" rev-parse 'refs/ai-review/source^{commit}')
 fetched_target_sha=$(git --git-dir="$cache" rev-parse 'refs/ai-review/target^{commit}')
@@ -102,6 +111,8 @@ git -C "$source_dir" fetch --quiet --no-tags "$cache" \
   '+refs/ai-review/target:refs/remotes/origin/target'
 git -C "$source_dir" checkout --quiet --detach "$source_sha"
 mkdir -p "$source_dir/artifacts"
+exec {work_lock_fd}>"$runtime/work/$work_name/.lock"
+flock -n "$work_lock_fd" || { echo 'work lock unavailable' >&2; exit 3; }
 
 cat >"$artifacts/run/prepared.env" <<EOF
 AI_REVIEW_WORK_NAME=$work_name
