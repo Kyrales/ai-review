@@ -268,6 +268,7 @@ async def test_discussion_mutations_use_documented_endpoints_and_payloads() -> N
         "/project/rt-vt/sppr/merge-request/41/discussions/resolve/discussion-1",
         "/project/rt-vt/sppr/merge-request/41/discussions/delete/discussion-1",
     ]
+    assert [request.method for request in requests] == ["POST", "POST", "POST", "DELETE"]
     assert requests[0].content == (b'{"newLine":12,"oldLine":11,"newPath":"new.py",'
                                    b'"oldPath":"old.py","message":"Please fix"}')
     assert requests[1].content == b'{"discussionUuid":"discussion-1","message":"Fixed"}'

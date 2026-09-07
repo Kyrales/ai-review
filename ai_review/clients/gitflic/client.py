@@ -53,6 +53,10 @@ class GitFlicHTTPClient(HTTPClient):
     async def _post(self, url: str, *, json: dict[str, object] | None = None) -> Response:
         return await self.client.request("POST", url, json=json, extensions=NO_RETRY)
 
+    @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
+    async def _delete(self, url: str) -> Response:
+        return await self.client.request("DELETE", url, extensions=NO_RETRY)
+
     async def get_mr(self, owner: str, project: str, merge_request_id: int) -> GitFlicMergeRequest:
         response = await self._get(self._mr_path(owner, project, merge_request_id))
         return GitFlicMergeRequest.model_validate_json(response.text)
@@ -157,7 +161,7 @@ class GitFlicHTTPClient(HTTPClient):
         discussion_uuid: str,
     ) -> None:
         safe_uuid = quote(discussion_uuid, safe="")
-        await self._post(
+        await self._delete(
             f"{self._mr_path(owner, project, merge_request_id)}/discussions/delete/{safe_uuid}"
         )
 
