@@ -19,6 +19,7 @@ cleanup() {
   [[ -n "${askpass:-}" ]] && rm -f -- "$askpass"
   [[ -n "${fetch_log:-}" ]] && rm -f -- "$fetch_log"
   [[ -n "${canary_file:-}" ]] && rm -f -- "$canary_file"
+  return 0
 }
 
 install_cleanup_traps() {

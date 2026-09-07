@@ -157,6 +157,17 @@ def test_cleanup_on_signal_preserves_signal_exit_status(tmp_path: Path):
     assert not (tmp_path / "fetch.log").exists()
 
 
+def test_cleanup_returns_success_when_no_temp_files_remain(tmp_path: Path):
+    result = run_shell_file(tmp_path, f"""
+        set -e
+        source '{bash_path(RUNTIME)}'
+        askpass=''; fetch_log=''; canary_file=''
+        cleanup
+    """)
+
+    assert result.returncode == 0, result.stderr
+
+
 def test_ttl_cleanup_skips_active_workdir_under_nonblocking_lock(tmp_path: Path):
     result = run_shell_file(tmp_path, f"""
         set -e
