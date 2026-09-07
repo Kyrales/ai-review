@@ -37,13 +37,19 @@ jobs:
       - name: Smoke test protected runtime image
         run: >-
           docker run --rm --read-only
-          --mount type=bind,src="$PWD",dst=/review,readonly
           --mount type=tmpfs,dst=/tmp
           --mount type=tmpfs,dst=/artifacts
-          -e AI_REVIEW_CONFIG_FILE_YAML=/review/ai_review/tests/configs/config-test.yaml
-          -e ARTIFACTS__LLM_DIR=/artifacts/llm
-          -e ARTIFACTS__VCS_DIR=/artifacts/vcs
-          -e ARTIFACTS__RUN_DIR=/artifacts/run
+          -e AI_REVIEW_CONFIG_FILE_YAML=/opt/ai-review-ci/sppr/.ai-review-ones.yaml
+          -e LLM__PROVIDER=OPENAI
+          -e LLM__HTTP_CLIENT__API_URL=https://example.invalid
+          -e LLM__HTTP_CLIENT__API_TOKEN=smoke
+          -e LLM__META__MODEL=smoke
+          -e VCS__PROVIDER=GITFLIC
+          -e VCS__PIPELINE__OWNER=smoke
+          -e VCS__PIPELINE__PROJECT=smoke
+          -e VCS__PIPELINE__MERGE_REQUEST_ID=1
+          -e VCS__HTTP_CLIENT__API_URL=https://example.invalid
+          -e VCS__HTTP_CLIENT__API_TOKEN=smoke
           ai-review-gitflic:ci run-followup --help
       - name: Publish verified image
         id: publish

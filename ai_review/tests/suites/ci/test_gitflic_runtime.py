@@ -33,3 +33,10 @@ def test_publish_workflow_keylessly_signs_published_digest():
     assert "sigstore/cosign-installer@" in workflow
     assert "cosign sign --yes" in workflow
     assert "ghcr.io/kyrales/ai-review@sha256:*" in workflow
+
+
+def test_publish_smoke_uses_embedded_config_without_artifact_overrides():
+    workflow = (ROOT / ".github/workflows/workflow-publish.yml").read_text(encoding="utf-8")
+
+    assert "AI_REVIEW_CONFIG_FILE_YAML=/opt/ai-review-ci/sppr/.ai-review-ones.yaml" in workflow
+    assert "ARTIFACTS__LLM_DIR" not in workflow

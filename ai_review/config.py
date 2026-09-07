@@ -1,3 +1,4 @@
+from pydantic import Field
 from pydantic_settings import (
     BaseSettings,
     SettingsConfigDict,
@@ -43,7 +44,7 @@ class Settings(BaseSettings):
     prompt: PromptConfig = PromptConfig()
     review: ReviewConfig = ReviewConfig()
     logger: LoggerConfig = LoggerConfig()
-    artifacts: ArtifactsConfig = ArtifactsConfig()
+    artifacts: ArtifactsConfig = Field(default_factory=ArtifactsConfig)
 
     @classmethod
     def settings_customise_sources(
