@@ -111,7 +111,7 @@ git -C "$source_dir" fetch --quiet --no-tags "$cache" \
   '+refs/ai-review/target:refs/remotes/origin/target'
 git -C "$source_dir" checkout --quiet --detach "$source_sha"
 mkdir -p "$source_dir/artifacts"
-exec {work_lock_fd}>"$source_dir/.lock"
+exec {work_lock_fd}>"$runtime/work/$work_name/.lock"
 flock -n "$work_lock_fd" || { echo 'work lock unavailable' >&2; exit 3; }
 
 cat >"$artifacts/run/prepared.env" <<EOF

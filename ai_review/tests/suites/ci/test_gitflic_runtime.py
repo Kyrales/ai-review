@@ -42,6 +42,7 @@ def test_image_contains_self_contained_gitflic_prepare_runtime():
     assert "GIT_ASKPASS" in script
     assert "mktemp /tmp" not in script
     assert 'mktemp "$runtime/work/' in script
+    assert 'exec {work_lock_fd}>"$runtime/work/$work_name/.lock"' in script
     assert "COPY ci /opt/ai-review-ci" in dockerfile
 
 
