@@ -112,6 +112,19 @@ class GitFlicDiscussionsEmbedded(GitFlicModel):
     restDiscussionModelList: list[GitFlicDiscussionEnvelope]
 
 
+def empty_discussions_embedded() -> GitFlicDiscussionsEmbedded:
+    return GitFlicDiscussionsEmbedded(restDiscussionModelList=[])
+
+
 class GitFlicDiscussionsPage(GitFlicModel):
-    embedded: GitFlicDiscussionsEmbedded = Field(alias="_embedded")
+    embedded: GitFlicDiscussionsEmbedded = Field(
+        default_factory=empty_discussions_embedded,
+        alias="_embedded",
+    )
     page: GitFlicPage
+
+    @model_validator(mode="after")
+    def require_embedded_for_nonempty_page(self) -> "GitFlicDiscussionsPage":
+        if self.page.totalElements and "embedded" not in self.model_fields_set:
+            raise ValueError("GitFlic omitted _embedded for a nonempty discussions page")
+        return self

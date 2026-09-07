@@ -170,6 +170,22 @@ async def test_get_discussions_reads_all_pages() -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_discussions_accepts_empty_page_without_embedded() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={
+            "page": {"size": 100, "totalElements": 0, "totalPages": 0, "number": 0},
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.get_discussions("rt-vt", "sppr", 52)
+    finally:
+        await client.aclose()
+
+    assert result == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("status_code", [401, 403, 404])
 async def test_get_discussions_does_not_hide_http_errors(status_code: int) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
