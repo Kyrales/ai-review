@@ -369,6 +369,27 @@ async def test_process_inline_comments_calls_each(
 
 
 @pytest.mark.asyncio
+async def test_process_inline_comments_fails_when_inline_and_fallback_cannot_be_published(
+        fake_vcs_client: FakeVCSClient,
+        review_comment_gateway: ReviewCommentGateway,
+):
+    async def fail_inline(file: str, line: int, message: str):
+        raise RuntimeError("inline unavailable")
+
+    async def fail_general(body: str):
+        raise RuntimeError("fallback unavailable")
+
+    fake_vcs_client.create_inline_comment = fail_inline
+    fake_vcs_client.create_general_comment = fail_general
+    comments = InlineCommentListSchema(root=[
+        InlineCommentSchema(file="a.py", line=1, message="c1"),
+    ])
+
+    with pytest.raises(RuntimeError, match="inline comments could not be published"):
+        await review_comment_gateway.process_inline_comments(comments)
+
+
+@pytest.mark.asyncio
 async def test_process_inline_comment_error_no_fallback_when_disabled(
         capsys: pytest.CaptureFixture,
         monkeypatch: pytest.MonkeyPatch,

@@ -9,6 +9,7 @@ from ai_review.services.prompt.adapter import build_prompt_context_from_review_i
 from ai_review.services.prompt.types import PromptServiceProtocol
 from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol, ReviewCommentGatewayProtocol
 from ai_review.services.review.internal.inline.types import InlineCommentServiceProtocol
+from ai_review.services.review.internal.inline.schema import InlineCommentListSchema
 from ai_review.services.review.runner.types import ReviewRunnerProtocol
 from ai_review.services.vcs.types import ReviewInfoSchema, VCSClientProtocol
 from ai_review.config import settings
@@ -41,11 +42,11 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         self.review_llm_gateway = review_llm_gateway
         self.review_comment_gateway = review_comment_gateway
 
-    async def process_file(self, file: str, review_info: ReviewInfoSchema) -> None:
+    async def analyze_file(self, file: str, review_info: ReviewInfoSchema) -> InlineCommentListSchema:
         raw_diff = self.git.get_diff_for_file(review_info.base_sha, review_info.head_sha, file)
         if not raw_diff.strip():
             logger.debug(f"No diff for {file}, skipping")
-            return
+            return InlineCommentListSchema(root=[])
 
         rendered_file = self.diff.render_file(
             file=file,
@@ -62,7 +63,7 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         comments.root = self.policy.apply_for_inline_comments(comments.root)
         if not comments.root:
             logger.info(f"No inline comments for file: {file}")
-            return
+            return comments
 
         if settings.vcs.provider is VCSProvider.GITFLIC:
             for comment in comments.root:
@@ -72,8 +73,13 @@ class InlineReviewRunner(ReviewRunnerProtocol):
                 )
                 comment.suggestion = None
 
-        logger.info(f"Posting {len(comments.root)} inline comments to {file}")
-        await self.review_comment_gateway.process_inline_comments(comments)
+        return comments
+
+    async def process_file(self, file: str, review_info: ReviewInfoSchema) -> None:
+        comments = await self.analyze_file(file, review_info)
+        if comments.root:
+            logger.info(f"Posting {len(comments.root)} inline comments to {file}")
+            await self.review_comment_gateway.process_inline_comments(comments)
 
     async def run(self) -> None:
         await hook.emit_inline_review_start()
@@ -87,8 +93,16 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         logger.info(f"Starting inline review: {len(review_info.changed_files)} files changed")
 
         changed_files = self.policy.apply_for_files(review_info.changed_files)
-        await bounded_gather([
-            self.process_file(changed_file, review_info)
+        results = await bounded_gather([
+            self.analyze_file(changed_file, review_info)
             for changed_file in changed_files
         ])
+        failures = [result for result in results if isinstance(result, BaseException)]
+        if failures:
+            raise RuntimeError(f"{len(failures)} inline review units failed") from failures[0]
+
+        for file, comments in zip(changed_files, results, strict=True):
+            if comments.root:
+                logger.info(f"Posting {len(comments.root)} inline comments to {file}")
+                await self.review_comment_gateway.process_inline_comments(comments)
         await hook.emit_inline_review_complete(self.cost.aggregate())

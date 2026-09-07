@@ -70,6 +70,28 @@ async def test_run_happy_path(
 
 
 @pytest.mark.asyncio
+async def test_run_fails_before_publication_when_any_llm_unit_fails(
+        monkeypatch,
+        inline_review_runner: InlineReviewRunner,
+        fake_git_service: FakeGitService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_review_direct_llm_gateway: FakeReviewDirectLLMGateway,
+):
+    fake_git_service.responses["get_diff_for_file"] = "FAKE_DIFF"
+    fake_review_comment_gateway.responses["get_inline_comments"] = []
+
+    async def fail(_: str, __: str) -> str:
+        raise RuntimeError("model unavailable")
+
+    monkeypatch.setattr(fake_review_direct_llm_gateway, "ask", fail)
+
+    with pytest.raises(RuntimeError, match="inline review units failed"):
+        await inline_review_runner.run()
+
+    assert not any(call[0] == "process_inline_comments" for call in fake_review_comment_gateway.calls)
+
+
+@pytest.mark.asyncio
 async def test_run_skips_when_existing_comments(
         inline_review_runner: InlineReviewRunner,
         fake_vcs_client: FakeVCSClient,

@@ -186,6 +186,53 @@ async def test_get_discussions_does_not_hide_http_errors(status_code: int) -> No
 
 
 @pytest.mark.asyncio
+async def test_gitflic_get_retries_rate_limit() -> None:
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            return httpx.Response(429, headers={"Retry-After": "0"}, request=request)
+        return httpx.Response(200, request=request, json={
+            "id": "mr-1", "localId": 41, "title": "MR",
+            "sourceBranch": {"id": "feature", "title": "feature", "hash": "head"},
+            "targetBranch": {"id": "main", "title": "main", "hash": "base"},
+            "createdBy": AUTHOR,
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.get_mr("rt-vt", "sppr", 41)
+    finally:
+        await client.aclose()
+
+    assert result.localId == 41
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_gitflic_post_is_not_blindly_retried() -> None:
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        return httpx.Response(500, request=request, text="failed")
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicHTTPClientError):
+            await client.create_discussion(
+                "rt-vt", "sppr", 41, GitFlicCreateDiscussion(message="General comment")
+            )
+    finally:
+        await client.aclose()
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
 async def test_discussion_mutations_use_documented_endpoints_and_payloads() -> None:
     requests: list[httpx.Request] = []
 

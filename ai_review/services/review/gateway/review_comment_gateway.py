@@ -23,6 +23,7 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
         self.vcs = vcs
         self.artifacts = artifacts
         self.inline_publication_failures = 0
+        self.inline_publication_warnings = 0
 
     async def get_inline_threads(self) -> list[ReviewThreadSchema]:
         threads = await self.vcs.get_inline_threads()
@@ -120,19 +121,26 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
 
             if settings.review.inline_comment_fallback:
                 logger.warning(f"Falling back to general comment for {comment.file}:{comment.line}")
-                await self.process_inline_fallback_comment(SummaryCommentSchema(text=comment.fallback_body))
+                fallback_posted = await self.process_inline_fallback_comment(
+                    SummaryCommentSchema(text=comment.fallback_body)
+                )
+                if fallback_posted:
+                    self.inline_publication_warnings += 1
+                    return True
             return False
 
-    async def process_inline_fallback_comment(self, comment: SummaryCommentSchema) -> None:
+    async def process_inline_fallback_comment(self, comment: SummaryCommentSchema) -> bool:
         try:
             await hook.emit_summary_comment_start(comment)
             await self.vcs.create_general_comment(comment.body_with_fallback_tag)
             await hook.emit_summary_comment_complete(comment)
 
             await self.artifacts.save_vcs_summary(comment)
+            return True
         except Exception as error:
             logger.exception(f"Failed to process inline fallback comment: {comment} — {error}")
             await hook.emit_summary_comment_error(comment)
+            return False
 
     async def process_summary_comment(self, comment: SummaryCommentSchema) -> bool:
         try:
@@ -149,7 +157,10 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
 
     async def process_inline_comments(self, comments: InlineCommentListSchema) -> None:
         published = await bounded_gather([self.process_inline_comment(comment) for comment in comments.root])
-        self.inline_publication_failures += sum(result is False for result in published)
+        failures = sum(result is False or isinstance(result, BaseException) for result in published)
+        self.inline_publication_failures += failures
+        if failures:
+            raise RuntimeError(f"{failures} inline comments could not be published")
 
     async def finalize(self) -> None:
         if not isinstance(self.vcs, SupportsBatchedComments):

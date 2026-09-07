@@ -13,5 +13,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
 RUN git config --global --add safe.directory '*' && git config --global core.quotepath false
 COPY --from=build /wheels /wheels
 RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels
+COPY ci /opt/ai-review-ci
+RUN chmod 755 /opt/ai-review-ci/gitflic/prepare.sh
 WORKDIR /review
 ENTRYPOINT ["ai-review"]
