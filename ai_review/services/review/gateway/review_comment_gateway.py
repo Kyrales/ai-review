@@ -1,4 +1,7 @@
+import os
+
 from ai_review.config import settings
+from ai_review.libs.constants.vcs_provider import VCSProvider
 from ai_review.libs.asynchronous.gather import bounded_gather
 from ai_review.libs.logger import get_logger
 from ai_review.services.artifacts.types import ArtifactsServiceProtocol
@@ -8,6 +11,7 @@ from ai_review.services.review.internal.inline.schema import InlineCommentListSc
 from ai_review.services.review.internal.inline_reply.schema import InlineCommentReplySchema
 from ai_review.services.review.internal.summary.schema import SummaryCommentSchema
 from ai_review.services.review.internal.summary_reply.schema import SummaryCommentReplySchema
+from ai_review.services.vcs.gitflic.markers import MarkerKind, parse_marker
 from ai_review.services.vcs.types import (
     VCSClientProtocol,
     ReviewThreadSchema,
@@ -16,6 +20,14 @@ from ai_review.services.vcs.types import (
 )
 
 logger = get_logger("REVIEW_COMMENT_GATEWAY")
+
+
+def _is_legacy_gitflic_fallback(comment: ReviewCommentSchema) -> bool:
+    if settings.vcs.provider is not VCSProvider.GITFLIC:
+        return False
+    trusted_author_id = os.environ.get("AI_REVIEW_GITFLIC_USER_ID", "")
+    marker = parse_marker(comment.body, comment.author.id, trusted_author_id)
+    return marker is not None and marker.kind is MarkerKind.FINDING
 
 
 class ReviewCommentGateway(ReviewCommentGatewayProtocol):
@@ -65,8 +77,8 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
     async def get_clearable_summary_comments(self) -> list[ReviewCommentSchema]:
         """General comments that clear-summary removes.
 
-        Wider than get_summary_comments: it also matches the inline-fallback tag, so a
-        comment ai-review posted because a diff position was rejected is cleared too.
+        Wider than get_summary_comments: it also matches current fallback comments and
+        legacy inline-tagged general comments created by the GitFlic provider.
         get_summary_comments must stay narrow — SummaryReviewRunner uses it to decide
         whether a summary already exists, and a leftover fallback comment must not
         suppress the summary review.
@@ -76,6 +88,7 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
         comments = [
             comment for comment in general_comments
             if any(tag in comment.body for tag in tags)
+            or _is_legacy_gitflic_fallback(comment)
         ]
         logger.info(f"Detected {len(comments)}/{len(general_comments)} clearable AI general comments")
         return comments

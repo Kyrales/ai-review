@@ -1,12 +1,23 @@
 import pytest
 
 from ai_review.config import settings
+from ai_review.libs.constants.vcs_provider import VCSProvider
 from ai_review.services.review.gateway.review_comment_gateway import ReviewCommentGateway
 from ai_review.services.review.internal.inline.schema import InlineCommentSchema, InlineCommentListSchema
 from ai_review.services.review.internal.inline_reply.schema import InlineCommentReplySchema
 from ai_review.services.review.internal.summary.schema import SummaryCommentSchema
 from ai_review.services.review.internal.summary_reply.schema import SummaryCommentReplySchema
-from ai_review.services.vcs.types import ReviewThreadSchema, ReviewCommentSchema, ThreadKind
+from ai_review.services.vcs.gitflic.markers import (
+    MarkerKind,
+    ReviewMarker,
+    decorate_ai_message,
+)
+from ai_review.services.vcs.types import (
+    ReviewThreadSchema,
+    ReviewCommentSchema,
+    ThreadKind,
+    UserSchema,
+)
 from ai_review.tests.fixtures.services.artifacts import FakeArtifactsService
 from ai_review.tests.fixtures.services.hook import FakeHookService
 from ai_review.tests.fixtures.services.vcs import FakeVCSClient, FakeBatchingVCSClient
@@ -558,6 +569,55 @@ async def test_clear_summary_comments_deletes_inline_fallback_comments(
 
     deleted = [call for call in fake_vcs_client.calls if call[0] == "delete_general_comment"]
     assert {call[1][0] for call in deleted} == {"10", "11"}
+
+
+@pytest.mark.asyncio
+async def test_clear_summary_comments_deletes_legacy_unbound_inline_comments(
+        monkeypatch: pytest.MonkeyPatch,
+        fake_vcs_client: FakeVCSClient,
+        review_comment_gateway: ReviewCommentGateway,
+):
+    monkeypatch.setattr(settings.vcs, "provider", VCSProvider.GITFLIC)
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    body = decorate_ai_message(
+        "legacy fallback",
+        ReviewMarker(kind=MarkerKind.FINDING, head="a" * 40),
+    ) + f"\n{settings.review.inline_tag}"
+    fake_vcs_client.responses["get_general_comments"] = [
+        ReviewCommentSchema(id="10", body=body, author=UserSchema(id="owner")),
+        ReviewCommentSchema(id="11", body=body, author=UserSchema(id="other")),
+        ReviewCommentSchema(
+            id="12",
+            body=f"a human quoted {settings.review.inline_tag}",
+            author=UserSchema(id="owner"),
+        ),
+    ]
+
+    await review_comment_gateway.clear_summary_comments()
+
+    deleted = [call for call in fake_vcs_client.calls if call[0] == "delete_general_comment"]
+    assert [call[1][0] for call in deleted] == ["10"]
+
+
+@pytest.mark.asyncio
+async def test_clear_summary_comments_does_not_apply_legacy_rule_to_other_vcs(
+        monkeypatch: pytest.MonkeyPatch,
+        fake_vcs_client: FakeVCSClient,
+        review_comment_gateway: ReviewCommentGateway,
+):
+    monkeypatch.setattr(settings.vcs, "provider", VCSProvider.GITHUB)
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    body = decorate_ai_message(
+        "legacy fallback",
+        ReviewMarker(kind=MarkerKind.FINDING, head="a" * 40),
+    ) + f"\n{settings.review.inline_tag}"
+    fake_vcs_client.responses["get_general_comments"] = [
+        ReviewCommentSchema(id="10", body=body, author=UserSchema(id="owner")),
+    ]
+
+    await review_comment_gateway.clear_summary_comments()
+
+    assert all(call[0] != "delete_general_comment" for call in fake_vcs_client.calls)
 
 
 @pytest.mark.asyncio
