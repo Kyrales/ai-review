@@ -1,3 +1,5 @@
+import asyncio
+
 from ai_review.libs.logger import get_logger
 from ai_review.services.artifacts.types import ArtifactsServiceProtocol
 from ai_review.services.cost.schema import CalculateCostSchema
@@ -23,11 +25,18 @@ class ReviewDirectLLMGateway(ReviewLLMGatewayProtocol):
     async def ask(self, prompt: str, prompt_system: str) -> str:
         try:
             await hook.emit_chat_start(prompt, prompt_system)
-            result = await self.llm.chat(prompt, prompt_system)
-            if not result.text:
+            result = None
+            for attempt in range(3):
+                result = await self.llm.chat(prompt, prompt_system)
+                if result.text:
+                    break
                 logger.warning(
-                    f"LLM returned an empty response (prompt length={len(prompt)} chars)"
+                    f"LLM returned an empty response (prompt length={len(prompt)} chars, "
+                    f"attempt={attempt + 1}/3)"
                 )
+                if attempt < 2:
+                    await asyncio.sleep(0.5 * (2 ** attempt))
+            if result is None or not result.text:
                 raise RuntimeError("LLM returned an empty response")
 
             report = self.cost.calculate(

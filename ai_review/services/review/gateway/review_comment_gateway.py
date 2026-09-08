@@ -24,6 +24,7 @@ class ReviewCommentGateway(ReviewCommentGatewayProtocol):
         self.artifacts = artifacts
         self.inline_publication_failures = 0
         self.inline_publication_warnings = 0
+        self.inline_review_failures = 0
 
     async def get_inline_threads(self) -> list[ReviewThreadSchema]:
         threads = await self.vcs.get_inline_threads()

@@ -1,0 +1,104 @@
+# Устойчивость AI-review к большим diff и частичным сбоям — план реализации
+
+> **Для исполнителей:** выполнять задачи последовательно с TDD. После каждой задачи запускать указанные тесты. Перед завершением провести два независимых раунда ревью с `sol high`, исправив все замечания уровня Critical/Important.
+
+**Цель:** сделать GitFlic AI-review устойчивым к большим файлам и временным сбоям Codex LB: не терять успешные inline-замечания из-за единичного сбоя и завершать ревью с честным предупреждением о пропусках.
+
+**Архитектура:** лимит размера inline-промпта задаётся настройкой review и применяется после построения реального промпта. Слишком большой rendered diff разбивается по строкам на независимые части, при этом исходные номера строк и множество добавленных строк сохраняются; результаты частей объединяются и дедуплицируются существующим кодом. Ошибки отдельных файлов/частей собираются, успешные результаты публикуются сразу после анализа, а число пропусков передаётся в итоговый GitFlic summary. Пустые ответы и временные Responses/SSE-сбои повторяются ограниченное число раз.
+
+**Технологии:** Python 3.11+, Pydantic Settings, asyncio, httpx, pytest/pytest-asyncio.
+
+**Спецификация:** `doc/specs/24_ai_review_gitflic_design.md`, диагностика job 2336 от 2026-09-08.
+
+## Глобальные ограничения
+
+- Не менять публичный API VCS-провайдеров и формат GitFlic inline-маркеров.
+- Комментарий публикуется только на строке из `DiffFileSchema.added_lines`.
+- Разбиение выполняется только по целым строкам; номера строк в тексте diff не перенумеровываются.
+- Лимит по умолчанию — 100000 символов полного пользовательского промпта; значение конфигурируемое и не меньше 1000.
+- Одиночная ошибка анализа не отменяет публикацию успешных файлов/частей.
+- Секреты, `.env` и токены в репозитории не изменять.
+
+---
+
+### Задача 1: лимит промпта и разбиение rendered diff
+
+**Файлы:**
+- Изменить: `ai_review/libs/config/review.py` — добавить `max_inline_prompt_chars: int = Field(default=100_000, ge=1000)`.
+- Изменить: `ai_review/services/review/runner/inline.py` — добавить чистый helper разбиения `DiffFileSchema` и анализировать каждую часть.
+- Изменить: `ai_review/tests/suites/services/review/runner/test_inline.py` — регрессии лимита, сохранения номеров строк и объединения результатов.
+- Изменить: `ai_review/tests/fixtures/services/review/runner/inline.py` — если фикстуре понадобится настройка части.
+
+**Интерфейсы:**
+- Helper: `_split_rendered_file(diff: DiffFileSchema, max_prompt_chars: int, build_prompt: Callable[[DiffFileSchema], str], context: PromptContextSchema) -> list[DiffFileSchema]`.
+- Helper возвращает минимум одну часть, каждая проверяется фактической длиной `build_prompt(part)`; строка длиннее бюджета вызывает `ValueError` с именем файла и длиной.
+- В каждой части `file` совпадает с исходным, `diff` состоит из исходных строк, `added_lines` — пересечение исходных added lines с номерами этой части без сдвига.
+
+- [ ] Написать тест: diff из строк `+10`, ` 11`, `+20`, искусственный лимит делит его на две части, номера `10` и `20` сохранены.
+- [ ] Запустить `pytest ai_review/tests/suites/services/review/runner/test_inline.py -k split -q`; ожидать FAIL до реализации.
+- [ ] Написать тест: строка длиннее лимита вызывает `ValueError`, а не отправляется в LLM.
+- [ ] Запустить тест и убедиться в FAIL.
+- [ ] Реализовать разбиение жадным накоплением строк и анализ частей с тем же `build_inline_request`; объединить `InlineCommentListSchema.root`, вызвать `dedupe`, затем применить фильтр file/added_lines/policy один раз.
+- [ ] Запустить целевые тесты; ожидать PASS.
+- [ ] Добавить в `README.md` описание переменной `REVIEW__MAX_INLINE_PROMPT_CHARS` и значения по умолчанию.
+- [ ] Зафиксировать коммит `feat: split oversized inline review prompts`.
+
+### Задача 2: частичная публикация результатов
+
+**Файлы:**
+- Изменить: `ai_review/services/review/runner/inline.py` — не выбрасывать успешные результаты при исключениях; учитывать ошибки анализа частей/файлов.
+- Изменить: `ai_review/services/review/gateway/review_comment_gateway.py` — добавить счётчик `inline_review_failures`.
+- Изменить: `ai_review/services/review/runner/summary.py` — выбирать `complete_with_warnings`, если были пропущены анализ или публикация.
+- Изменить: `ai_review/tests/suites/services/review/runner/test_inline.py` — успешный файл публикуется при сбое другого.
+- Изменить: `ai_review/tests/suites/services/review/runner/test_initial_recovery.py` — маркер summary с предупреждением при пропущенном анализе.
+- Изменить: `ai_review/tests/fixtures/services/review/gateway/review_comment_gateway.py` — добавить счётчик в fake.
+
+**Интерфейсы:**
+- `ReviewCommentGateway` и fake имеют `inline_review_failures: int = 0`.
+- `InlineReviewRunner.run()` публикует каждый успешный `InlineCommentListSchema`; при ошибке увеличивает счётчик и пишет имя файла/причину в warning-лог.
+- Если все части/файлы завершились ошибкой, runner всё равно не падает до summary; summary получает статус предупреждения.
+
+- [ ] Написать тест с двумя файлами: первый возвращает комментарий, второй бросает `RuntimeError`; ожидать один вызов публикации и `inline_review_failures == 1`.
+- [ ] Запустить тест; ожидать FAIL на текущем `RuntimeError: inline review units failed`.
+- [ ] Реализовать сбор результатов, публикацию успешных и счётчик failures.
+- [ ] Изменить summary-статус на `complete_with_warnings`, если `inline_review_failures > 0` или `inline_publication_warnings > 0`.
+- [ ] Запустить целевые тесты; ожидать PASS.
+- [ ] Зафиксировать коммит `feat: publish successful inline results after partial failures`.
+
+### Задача 3: повтор временных/пустых ответов Codex LB
+
+**Файлы:**
+- Изменить: `ai_review/services/review/gateway/review_direct_llm_gateway.py` — повторить пустой ответ до трёх попыток с экспоненциальной паузой.
+- Изменить: `ai_review/clients/openai/v2/client.py` — считать `response.failed` без кода и конфликтующие `response.output_text.done` временной protocol-ошибкой; повторить стандартным циклом клиента.
+- Изменить: `ai_review/tests/suites/services/review/gateway/test_review_direct_llm_gateway.py` — тест пустой ответ → успешный ответ.
+- Изменить: `ai_review/tests/suites/clients/openai/v2/test_client.py` — тест retry для failed без кода и conflicting done.
+
+**Интерфейсы:**
+- Количество попыток фиксировано `3`, задержки `0.5`, `1.0` секунд; обычные исключения gateway не маскируются.
+- `OpenAIV2ProtocolError.retryable` остаётся внутренним флагом клиента; успешный SSE-протокол не меняется.
+
+- [ ] Написать тесты RED для пустого ответа и двух SSE-сценариев.
+- [ ] Запустить целевые тесты; ожидать FAIL.
+- [ ] Реализовать повтор без изменения формата `ChatResultSchema` и `OpenAIResponsesResponseSchema`.
+- [ ] Запустить целевые тесты; ожидать PASS.
+- [ ] Зафиксировать коммит `fix: retry transient Codex LB responses`.
+
+### Задача 4: документация, два раунда ревью и интеграционная проверка
+
+**Файлы:**
+- Изменить: `README.md` и `docs/ci/gitlab.yaml` — описать лимит и поведение частичного результата.
+- Изменить: `doc/specs/24_ai_review_gitflic_resilience_implementation_plan.md` — отметить выполненные шаги и добавить фактические команды проверки.
+
+- [ ] Выполнить полный набор `pytest -q` из корня `ai_review`.
+- [ ] Выполнить `ruff check ai_review` и `git diff --check`.
+- [ ] Провести первый раунд ревью агентом `sol high`; устранить все Critical/Important замечания, проверить тестами.
+- [ ] Провести второй раунд ревью агентом `sol high` по обновлённому diff; устранить все Critical/Important замечания, проверить тестами.
+- [ ] Проверить итоговый diff, ветку и отсутствие секретов.
+- [ ] Собрать Docker-образ/CI-пакет только после зелёных локальных проверок; внешний job запускать отдельно.
+
+## Самопроверка плана
+
+- Покрыты все причины job 2336: большой prompt, пустой ответ, SSE-ошибки и атомарный abort публикации.
+- Все изменения сопровождаются сначала падающим, затем зелёным тестом.
+- Контракт привязки к добавленным строкам сохраняется и проверяется в целевых тестах.
+- Плейсхолдеров `TODO`, `TBD` и незаданных интерфейсов нет.

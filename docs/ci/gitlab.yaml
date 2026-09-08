@@ -254,6 +254,11 @@
     # REVIEW__MAX_INLINE_COMMENTS: "20"   # Max inline comments per file (default: unlimited)
     # REVIEW__MAX_CONTEXT_COMMENTS: "50"  # Max context comments per MR (default: unlimited)
 
+    # Maximum size of one inline LLM prompt. Oversized rendered files are split
+    # by complete lines, preserving source line numbers and added-line checks.
+    # Default: 100000 characters.
+    REVIEW__MAX_INLINE_PROMPT_CHARS: "100000"
+
     # Fallback inline comments to summary comments on failure.
     # When disabled, failed inline comments are logged and skipped.
     # Default: true

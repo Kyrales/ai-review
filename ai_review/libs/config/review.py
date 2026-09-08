@@ -31,4 +31,5 @@ class ReviewConfig(BaseModel):
     ignore_pure_renames: bool = True
     max_inline_comments: int | None = None
     max_context_comments: int | None = None
+    max_inline_prompt_chars: int = Field(default=100_000, ge=1000)
     inline_comment_fallback: bool = True

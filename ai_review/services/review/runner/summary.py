@@ -128,9 +128,11 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
 
         logger.info(f"Posting summary review comment ({len(summary.text)} chars)")
         if settings.vcs.provider is VCSProvider.GITFLIC:
-            status = "complete_with_warnings" if getattr(
-                self.review_comment_gateway, "inline_publication_warnings", 0,
-            ) else "complete"
+            has_warnings = (
+                getattr(self.review_comment_gateway, "inline_publication_warnings", 0)
+                or getattr(self.review_comment_gateway, "inline_review_failures", 0)
+            )
+            status = "complete_with_warnings" if has_warnings else "complete"
             summary.text = decorate_ai_message(
                 summary.text,
                 ReviewMarker(kind=MarkerKind.SUMMARY, status=status, head=review_info.head_sha),

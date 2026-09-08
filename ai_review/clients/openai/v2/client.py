@@ -64,9 +64,7 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
             raise OpenAIV2ProtocolError("SSE event name does not match payload type")
         if payload_type in {"response.failed", "response.incomplete"}:
             error = (payload.get("response") or {}).get("error") or {}
-            retryable = payload_type == "response.failed" and error.get("code") in {
-                "server_error", "upstream_unavailable", "rate_limit_exceeded",
-            }
+            retryable = payload_type == "response.failed"
             raise OpenAIV2ProtocolError(
                 f"SSE terminated with {payload_type}", retryable=retryable,
             )
@@ -80,7 +78,10 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
             if not isinstance(text, str):
                 raise OpenAIV2ProtocolError("response.output_text.done has no text")
             if done_text is not None and done_text != text:
-                raise OpenAIV2ProtocolError("SSE contains conflicting response.output_text.done events")
+                raise OpenAIV2ProtocolError(
+                    "SSE contains conflicting response.output_text.done events",
+                    retryable=True,
+                )
             done_text = text
         if payload_type == "response.completed":
             if completed is not None:

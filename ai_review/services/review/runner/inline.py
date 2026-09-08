@@ -1,7 +1,10 @@
+from collections.abc import Callable
+
 from ai_review.libs.asynchronous.gather import bounded_gather
 from ai_review.libs.logger import get_logger
 from ai_review.services.cost.types import CostServiceProtocol
 from ai_review.services.diff.types import DiffServiceProtocol
+from ai_review.services.diff.schema import DiffFileSchema
 from ai_review.services.git.types import GitServiceProtocol
 from ai_review.services.hook import hook
 from ai_review.services.policy.types import PolicyServiceProtocol
@@ -27,6 +30,52 @@ INLINE_COMMENTABLE_MODES = {
     ReviewMode.ONLY_ADDED_WITH_CONTEXT,
     ReviewMode.ADDED_AND_REMOVED_WITH_CONTEXT,
 }
+
+
+def _split_rendered_file(
+        rendered_file,
+        max_prompt_chars: int,
+        build_prompt: Callable[[DiffFileSchema], str],
+):
+    """Split a rendered file by complete lines without changing source numbers."""
+    import re
+
+    lines = rendered_file.diff.splitlines()
+    if not lines:
+        return [rendered_file]
+
+    parts = []
+    current: list[str] = []
+    line_pattern = re.compile(r"^[+ ](\d+): ")
+
+    def make_part(part_lines: list[str]):
+        added_lines = {
+            int(match.group(1))
+            for line in part_lines
+            if (match := line_pattern.match(line))
+        } & rendered_file.added_lines
+        return DiffFileSchema(
+            file=rendered_file.file,
+            diff="\n".join(part_lines),
+            added_lines=added_lines,
+        )
+
+    for line in lines:
+        current.append(line)
+        candidate = make_part(current)
+        if len(current) > 1 and len(build_prompt(candidate)) > max_prompt_chars:
+            current.pop()
+            parts.append(make_part(current))
+            current = [line]
+            candidate = make_part(current)
+        if len(build_prompt(candidate)) > max_prompt_chars:
+            raise ValueError(
+                f"Rendered diff line for {rendered_file.file} exceeds inline prompt limit "
+                f"({max_prompt_chars} chars)"
+            )
+    if current:
+        parts.append(make_part(current))
+    return parts
 
 
 class InlineReviewRunner(ReviewRunnerProtocol):
@@ -70,11 +119,31 @@ class InlineReviewRunner(ReviewRunnerProtocol):
             raw_diff=raw_diff,
         )
         prompt_context = build_prompt_context_from_review_info(review_info)
-        prompt = self.prompt.build_inline_request(rendered_file, prompt_context)
         prompt_system = self.prompt.build_system_inline_request(prompt_context)
-        prompt_result = await self.review_llm_gateway.ask(prompt, prompt_system)
-
-        comments = self.inline_comment.parse_model_output(prompt_result).dedupe()
+        build_prompt = lambda part: self.prompt.build_inline_request(part, prompt_context)
+        parts = _split_rendered_file(
+            rendered_file,
+            settings.review.max_inline_prompt_chars,
+            build_prompt,
+        )
+        results = await bounded_gather([
+            self.review_llm_gateway.ask(build_prompt(part), prompt_system)
+            for part in parts
+        ])
+        parsed_comments = []
+        failures = []
+        for result in results:
+            if isinstance(result, BaseException):
+                failures.append(result)
+            else:
+                parsed_comments.extend(self.inline_comment.parse_model_output(result).root)
+        if failures:
+            self.review_comment_gateway.inline_review_failures += len(failures)
+            logger.warning(
+                f"Skipped {len(failures)} inline review part(s) for {file}; "
+                f"successful parts are preserved"
+            )
+        comments = InlineCommentListSchema(root=parsed_comments).dedupe()
         valid_comments = [
             comment for comment in comments.root
             if comment.file == file
@@ -124,10 +193,18 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         ])
         failures = [result for result in results if isinstance(result, BaseException)]
         if failures:
-            raise RuntimeError(f"{len(failures)} inline review units failed") from failures[0]
+            self.review_comment_gateway.inline_review_failures += len(failures)
+            for failure in failures:
+                logger.warning(f"Skipped inline review file after failure: {failure}")
 
         for file, comments in zip(changed_files, results, strict=True):
+            if isinstance(comments, BaseException):
+                continue
             if comments.root:
                 logger.info(f"Posting {len(comments.root)} inline comments to {file}")
-                await self.review_comment_gateway.process_inline_comments(comments)
+                try:
+                    await self.review_comment_gateway.process_inline_comments(comments)
+                except Exception as error:
+                    self.review_comment_gateway.inline_review_failures += 1
+                    logger.exception(f"Failed to publish inline comments for {file}: {error}")
         await hook.emit_inline_review_complete(self.cost.aggregate())

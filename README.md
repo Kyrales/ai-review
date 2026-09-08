@@ -293,6 +293,11 @@ ai-review:
     LLM__HTTP_CLIENT__API_URL: "https://api.openai.com/v1"
     LLM__HTTP_CLIENT__API_TOKEN: "$OPENAI_API_KEY"
 
+    # --- Large diff protection ---
+    # Oversized inline prompts are split by complete lines; successful parts
+    # are published even if another part temporarily fails.
+    REVIEW__MAX_INLINE_PROMPT_CHARS: "100000"
+
     # --- GitLab integration ---
     VCS__PROVIDER: "GITLAB"
     VCS__PIPELINE__PROJECT_ID: "$CI_PROJECT_ID"

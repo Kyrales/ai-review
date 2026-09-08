@@ -3,7 +3,8 @@ import pytest
 from ai_review.config import settings
 from ai_review.libs.constants.vcs_provider import VCSProvider
 from ai_review.libs.config.review import ReviewMode
-from ai_review.services.review.runner.inline import InlineReviewRunner
+from ai_review.services.review.runner.inline import InlineReviewRunner, _split_rendered_file
+from ai_review.services.diff.schema import DiffFileSchema
 from ai_review.services.review.internal.inline.schema import InlineCommentSchema
 from ai_review.services.diff.service import DiffService
 from ai_review.services.vcs.gitflic.markers import MarkerKind, parse_marker
@@ -76,7 +77,7 @@ async def test_run_happy_path(
 
 
 @pytest.mark.asyncio
-async def test_run_fails_before_publication_when_any_llm_unit_fails(
+async def test_run_continues_when_any_llm_unit_fails(
         monkeypatch,
         inline_review_runner: InlineReviewRunner,
         fake_git_service: FakeGitService,
@@ -91,10 +92,62 @@ async def test_run_fails_before_publication_when_any_llm_unit_fails(
 
     monkeypatch.setattr(fake_review_direct_llm_gateway, "ask", fail)
 
-    with pytest.raises(RuntimeError, match="inline review units failed"):
-        await inline_review_runner.run()
+    await inline_review_runner.run()
 
     assert not any(call[0] == "process_inline_comments" for call in fake_review_comment_gateway.calls)
+    assert fake_review_comment_gateway.inline_review_failures == 1
+
+
+def test_split_rendered_file_preserves_source_line_numbers():
+    rendered = DiffFileSchema(
+        file="module.bsl",
+        diff="+10: first\n 11: context\n+20: second",
+        added_lines={10, 20},
+    )
+
+    parts = _split_rendered_file(rendered, 30, lambda part: f"header\n{part.diff}")
+
+    assert [part.diff for part in parts] == ["+10: first\n 11: context", "+20: second"]
+    assert [part.added_lines for part in parts] == [{10}, {20}]
+
+
+def test_split_rendered_file_rejects_line_larger_than_budget():
+    rendered = DiffFileSchema(file="module.bsl", diff="+10: too long", added_lines={10})
+
+    with pytest.raises(ValueError, match="module.bsl"):
+        _split_rendered_file(rendered, 5, lambda part: part.diff)
+
+
+@pytest.mark.asyncio
+async def test_run_publishes_successful_files_when_another_file_fails(
+        inline_review_runner: InlineReviewRunner,
+        fake_vcs_client: FakeVCSClient,
+        fake_git_service: FakeGitService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=["ok.py", "broken.py"], base_sha="A", head_sha="B",
+    )
+    fake_review_comment_gateway.responses["get_inline_comments"] = []
+    fake_inline_comment_service.comments = [InlineCommentSchema(file="ok.py", line=1, message="finding")]
+
+    original = inline_review_runner.analyze_file
+
+    async def analyze(file: str, review_info: ReviewInfoSchema):
+        if file == "broken.py":
+            raise RuntimeError("temporary model failure")
+        return await original(file, review_info)
+
+    inline_review_runner.analyze_file = analyze
+    fake_git_service.responses["get_diff_for_file"] = "FAKE_DIFF"
+
+    await inline_review_runner.run()
+
+    calls = [call for call in fake_review_comment_gateway.calls if call[0] == "process_inline_comments"]
+    assert len(calls) == 1
+    assert calls[0][1]["comments"].root[0].file == "ok.py"
+    assert fake_review_comment_gateway.inline_review_failures == 1
 
 
 @pytest.mark.asyncio

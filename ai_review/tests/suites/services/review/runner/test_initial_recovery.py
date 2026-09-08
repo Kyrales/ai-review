@@ -138,3 +138,19 @@ async def test_inline_publication_failure_marks_terminal_summary_with_warning(
     await summary_review_runner.run()
 
     assert _terminal_marker(fake_review_comment_gateway).status == "complete_with_warnings"
+
+
+@pytest.mark.asyncio
+async def test_inline_analysis_failure_marks_terminal_summary_with_warning(
+        monkeypatch, summary_review_runner, fake_vcs_client, fake_review_comment_gateway,
+):
+    _gitflic(monkeypatch)
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=["file.py"], base_sha="b" * 40, head_sha=HEAD,
+    )
+    fake_review_comment_gateway.responses.update({"get_summary_comments": [], "get_inline_comments": []})
+    fake_review_comment_gateway.inline_review_failures = 1
+
+    await summary_review_runner.run()
+
+    assert _terminal_marker(fake_review_comment_gateway).status == "complete_with_warnings"

@@ -101,6 +101,67 @@ async def test_chat_retries_retryable_sse_failure(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_retries_failed_event_without_error_code(monkeypatch):
+    attempts = 0
+    failed = {"type": "response.failed", "response": {"status": "failed"}}
+    completed = {"type": "response.completed", "response": _response_payload()}
+
+    async def handler(_: Request) -> Response:
+        nonlocal attempts
+        attempts += 1
+        payload = failed if attempts == 1 else completed
+        body = f"event: {payload['type']}\ndata: {json.dumps(payload)}\n\ndata: [DONE]\n\n"
+        return Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async def no_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("ai_review.clients.openai.v2.client.asyncio.sleep", no_sleep)
+    client = OpenAIV2HTTPClient(AsyncClient(
+        base_url="https://codex.example/backend-api/codex", transport=MockTransport(handler),
+    ))
+
+    response = await client.chat(OpenAIResponsesRequestSchema(model="test", input=[]))
+
+    assert response.first_text == "Замечание"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_chat_retries_conflicting_done_event(monkeypatch):
+    attempts = 0
+    completed = {"type": "response.completed", "response": _response_payload()}
+
+    async def handler(_: Request) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            events = [
+                ("response.output_text.done", {"type": "response.output_text.done", "text": "one"}),
+                ("response.output_text.done", {"type": "response.output_text.done", "text": "two"}),
+            ]
+        else:
+            events = [("response.completed", completed)]
+        body = "".join(
+            f"event: {name}\ndata: {json.dumps(payload)}\n\n" for name, payload in events
+        ) + "data: [DONE]\n\n"
+        return Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async def no_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("ai_review.clients.openai.v2.client.asyncio.sleep", no_sleep)
+    client = OpenAIV2HTTPClient(AsyncClient(
+        base_url="https://codex.example/backend-api/codex", transport=MockTransport(handler),
+    ))
+
+    response = await client.chat(OpenAIResponsesRequestSchema(model="test", input=[]))
+
+    assert response.first_text == "Замечание"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
 async def test_chat_reconstructs_text_when_completed_output_is_empty():
     completed = {
         "type": "response.completed",

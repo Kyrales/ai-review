@@ -21,6 +21,9 @@ from ai_review.services.vcs.types import (
 class FakeReviewCommentGateway(ReviewCommentGatewayProtocol):
     def __init__(self, responses: dict[str, Any] | None = None):
         self.calls: list[tuple[str, dict]] = []
+        self.inline_review_failures = 0
+        self.inline_publication_failures = 0
+        self.inline_publication_warnings = 0
 
         fake_user = UserSchema(id="u1", username="tester", name="Tester")
 

@@ -51,6 +51,26 @@ async def test_ask_rejects_empty_response(
 
 
 @pytest.mark.asyncio
+async def test_ask_retries_empty_response_before_success(
+        monkeypatch,
+        review_direct_llm_gateway: ReviewDirectLLMGateway,
+        fake_llm_client: FakeLLMClient,
+):
+    responses = iter([ChatResultSchema(text=""), ChatResultSchema(text="OK")])
+    async def chat(*_args, **_kwargs):
+        return next(responses)
+
+    fake_llm_client.chat = chat
+
+    async def sleep(*_args):
+        return None
+
+    monkeypatch.setattr("ai_review.services.review.gateway.review_direct_llm_gateway.asyncio.sleep", sleep)
+
+    assert await review_direct_llm_gateway.ask("PROMPT", "SYSTEM_PROMPT") == "OK"
+
+
+@pytest.mark.asyncio
 async def test_ask_passes_llm_tokens_to_calculate(
         review_direct_llm_gateway: ReviewDirectLLMGateway,
         fake_llm_client: FakeLLMClient,
