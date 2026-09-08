@@ -60,14 +60,22 @@ class GitFlicVCSClient(VCSClientProtocol):
         changes = await self.http_client.get_changes(self.owner, self.project, self.merge_request_id)
         request = find_position(changes.commitBlobs, file, line)
         if request is None:
-            await self.create_general_comment(message)
-            return
-        await self.http_client.create_discussion(
+            raise RuntimeError(f"GitFlic has no inline position for {file}:{line}")
+        created = await self.http_client.create_discussion(
             self.owner,
             self.project,
             self.merge_request_id,
             request=request.model_copy(update={"message": message}),
         )
+        expected = (request.newPath, request.newLine, request.oldPath, request.oldLine)
+        actual = (created.newPath, created.newLine, created.oldPath, created.oldLine)
+        if actual != expected:
+            await self.http_client.delete(
+                self.owner, self.project, self.merge_request_id, created.uuid
+            )
+            raise RuntimeError(
+                f"GitFlic created {file}:{line} without an inline position"
+            )
 
     async def delete_general_comment(self, comment_id: int | str) -> None:
         await self.http_client.delete(self.owner, self.project, self.merge_request_id, str(comment_id))

@@ -17,13 +17,21 @@ from ai_review.services.vcs.gitflic.client import GitFlicVCSClient
 from ai_review.services.vcs.types import ThreadKind
 
 
-def note(uuid: str, *, path: str | None = None, line: int | None = None) -> GitFlicNote:
+def note(
+    uuid: str,
+    *,
+    path: str | None = None,
+    line: int | None = None,
+    old_path: str | None = None,
+    old_line: int | None = None,
+) -> GitFlicNote:
     return GitFlicNote(
         uuid=uuid,
         rawMessage=f"message {uuid}",
         newPath=path,
-        oldPath=path,
+        oldPath=old_path if old_path is not None else path,
         newLine=line,
+        oldLine=old_line if old_line is not None else line,
         author=GitFlicAuthor(id="author", username="dev", fullName="Developer"),
         createdAt=datetime(2026, 1, 1),
     )
@@ -47,7 +55,16 @@ def gitflic_http(monkeypatch: pytest.MonkeyPatch):
             GitFlicDiscussion(**note("inline", path="a.bsl", line=7).model_dump(), replies=[note("reply")]),
             GitFlicDiscussion(**note("general").model_dump(), replies=[]),
         ]),
-        create_discussion=AsyncMock(), reply=AsyncMock(), delete=AsyncMock(), resolve=AsyncMock(),
+        create_discussion=AsyncMock(
+            side_effect=lambda _owner, _project, _mr, request: note(
+                "created",
+                path=request.newPath,
+                line=request.newLine,
+                old_path=request.oldPath,
+                old_line=request.oldLine,
+            )
+        ),
+        reply=AsyncMock(), delete=AsyncMock(), resolve=AsyncMock(),
     )
     monkeypatch.setattr("ai_review.services.vcs.gitflic.client.get_gitflic_http_client", lambda: client)
     monkeypatch.setattr(
@@ -75,19 +92,40 @@ async def test_client_maps_review_and_threads(gitflic_http):
 
 
 @pytest.mark.asyncio
-async def test_client_posts_inline_or_general_fallback_and_replies(gitflic_http):
+async def test_client_posts_general_inline_and_replies(gitflic_http):
     client = GitFlicVCSClient()
 
     await client.create_general_comment("general")
     await client.create_inline_comment("a.bsl", 7, "inline")
-    await client.create_inline_comment("a.bsl", 8, "fallback")
     await client.create_inline_reply("inline", "reply")
     await client.delete_inline_comment("inline")
 
     requests = [call.kwargs["request"] for call in gitflic_http.create_discussion.await_args_list]
-    assert [request.message for request in requests] == ["general", "inline", "fallback"]
+    assert [request.message for request in requests] == ["general", "inline"]
     assert requests[0].newPath is None
     assert (requests[1].newPath, requests[1].newLine) == ("a.bsl", 7)
-    assert requests[2].newPath is None
     gitflic_http.reply.assert_awaited_once_with("rt-vt", "sppr", 41, "inline", "reply")
     gitflic_http.delete.assert_awaited_once_with("rt-vt", "sppr", 41, "inline")
+
+
+@pytest.mark.asyncio
+async def test_client_raises_when_inline_position_is_unknown(gitflic_http):
+    gitflic_http.get_changes.return_value.commitBlobs[0].lines = []
+
+    with pytest.raises(RuntimeError, match=r"a\.bsl:8"):
+        await GitFlicVCSClient().create_inline_comment("a.bsl", 8, "finding")
+
+    gitflic_http.create_discussion.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_client_deletes_unbound_inline_response(gitflic_http):
+    gitflic_http.create_discussion.side_effect = None
+    gitflic_http.create_discussion.return_value = note("unexpected-general")
+
+    with pytest.raises(RuntimeError, match="without an inline position"):
+        await GitFlicVCSClient().create_inline_comment("a.bsl", 7, "finding")
+
+    gitflic_http.delete.assert_awaited_once_with(
+        "rt-vt", "sppr", 41, "unexpected-general"
+    )
