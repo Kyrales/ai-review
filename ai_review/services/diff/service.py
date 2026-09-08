@@ -68,7 +68,11 @@ class DiffService(DiffServiceProtocol):
             case _:
                 file_diff = f"# Unsupported mode: {settings.review.mode}"
 
-        return DiffFileSchema(diff=file_diff, file=file)
+        return DiffFileSchema(
+            diff=file_diff,
+            file=file,
+            added_lines=target.added_line_numbers() if target else set(),
+        )
 
     @classmethod
     def render_files(

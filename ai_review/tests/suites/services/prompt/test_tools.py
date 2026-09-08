@@ -14,13 +14,13 @@ from ai_review.services.vcs.types import ReviewThreadSchema, ReviewCommentSchema
 # ---------- format_file ----------
 
 def test_format_file_basic():
-    diff = DiffFileSchema(file="main.py", diff="+ print('hello')")
+    diff = DiffFileSchema(file="main.py", diff="+ print('hello')", added_lines=set())
     result = format_file(diff)
     assert result == "# File: main.py\n+ print('hello')\n"
 
 
 def test_format_file_empty_diff():
-    diff = DiffFileSchema(file="empty.py", diff="")
+    diff = DiffFileSchema(file="empty.py", diff="", added_lines=set())
     result = format_file(diff)
     assert result == "# File: empty.py\n\n"
 
@@ -28,7 +28,8 @@ def test_format_file_empty_diff():
 def test_format_file_multiline_diff():
     diff = DiffFileSchema(
         file="utils/helpers.py",
-        diff="- old line\n+ new line\n+ another line"
+        diff="- old line\n+ new line\n+ another line",
+        added_lines=set(),
     )
     result = format_file(diff)
     expected = (
@@ -41,14 +42,14 @@ def test_format_file_multiline_diff():
 
 
 def test_format_file_filename_with_path():
-    diff = DiffFileSchema(file="src/app/models/user.py", diff="+ class User:")
+    diff = DiffFileSchema(file="src/app/models/user.py", diff="+ class User:", added_lines=set())
     result = format_file(diff)
     assert result.startswith("# File: src/app/models/user.py\n")
     assert result.endswith("+ class User:\n")
 
 
 def test_format_file_handles_whitespace_filename():
-    diff = DiffFileSchema(file="   spaced.py  ", diff="+ print('x')")
+    diff = DiffFileSchema(file="   spaced.py  ", diff="+ print('x')", added_lines=set())
     result = format_file(diff)
     assert "# File:    spaced.py  " in result
 
@@ -57,8 +58,8 @@ def test_format_file_handles_whitespace_filename():
 
 def test_format_files_combines_multiple_diffs():
     diffs = [
-        DiffFileSchema(file="a.py", diff="+ foo"),
-        DiffFileSchema(file="b.py", diff="- bar"),
+        DiffFileSchema(file="a.py", diff="+ foo", added_lines=set()),
+        DiffFileSchema(file="b.py", diff="- bar", added_lines=set()),
     ]
     result = format_files(diffs)
 

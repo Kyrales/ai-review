@@ -2,7 +2,10 @@ import pytest
 
 from ai_review.config import settings
 from ai_review.libs.constants.vcs_provider import VCSProvider
+from ai_review.libs.config.review import ReviewMode
 from ai_review.services.review.runner.inline import InlineReviewRunner
+from ai_review.services.review.internal.inline.schema import InlineCommentSchema
+from ai_review.services.diff.service import DiffService
 from ai_review.services.vcs.gitflic.markers import MarkerKind, parse_marker
 from ai_review.services.vcs.types import ReviewInfoSchema, ReviewCommentSchema
 from ai_review.tests.fixtures.services.cost import FakeCostService
@@ -23,6 +26,9 @@ async def test_gitflic_finding_gets_trusted_runtime_marker(
 ):
     monkeypatch.setattr(settings.vcs, "provider", VCSProvider.GITFLIC)
     fake_git_service.responses["get_diff_for_file"] = "FAKE_DIFF"
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(file="main.py", line=1, message="Test comment"),
+    ]
     head = "a" * 40
 
     await inline_review_runner.process_file("main.py", ReviewInfoSchema(
@@ -146,6 +152,62 @@ async def test_process_file_skips_when_no_comments_after_llm(
     assert any(call[0] == "ask" for call in fake_review_direct_llm_gateway.calls)
     assert any(call[0] == "apply_for_inline_comments" for call in fake_policy_service.calls)
     assert not any(call[0] == "process_inline_comments" for call in fake_review_comment_gateway.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", [
+    ReviewMode.FULL_FILE_PREVIOUS,
+    ReviewMode.ONLY_REMOVED,
+    ReviewMode.ONLY_REMOVED_WITH_CONTEXT,
+])
+async def test_process_file_skips_inline_review_for_removed_only_mode(
+        monkeypatch,
+        mode: ReviewMode,
+        inline_review_runner: InlineReviewRunner,
+        fake_git_service: FakeGitService,
+        fake_review_direct_llm_gateway: FakeReviewDirectLLMGateway,
+):
+    monkeypatch.setattr(settings.review, "mode", mode)
+    fake_git_service.responses["get_diff_for_file"] = "SOME_DIFF"
+
+    await inline_review_runner.process_file(
+        "file.py",
+        ReviewInfoSchema(base_sha="A", head_sha="B"),
+    )
+
+    assert not any(call[0] == "ask" for call in fake_review_direct_llm_gateway.calls)
+
+
+@pytest.mark.asyncio
+async def test_process_file_publishes_comments_only_for_added_lines(
+        inline_review_runner: InlineReviewRunner,
+        fake_git_service: FakeGitService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    fake_git_service.responses["get_diff_for_file"] = (
+        "diff --git a/file.py b/file.py\n"
+        "--- a/file.py\n"
+        "+++ b/file.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " unchanged\n"
+        "-old\n"
+        "+new"
+    )
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(file="file.py", line=1, message="unchanged"),
+        InlineCommentSchema(file="file.py", line=2, message="added"),
+        InlineCommentSchema(file="a/file.py", line=2, message="another file"),
+    ]
+    inline_review_runner.diff = DiffService()
+
+    await inline_review_runner.process_file(
+        "file.py",
+        ReviewInfoSchema(base_sha="A", head_sha="B"),
+    )
+
+    calls = [call for call in fake_review_comment_gateway.calls if call[0] == "process_inline_comments"]
+    assert [comment.line for comment in calls[0][1]["comments"].root] == [2]
 
 
 @pytest.mark.asyncio

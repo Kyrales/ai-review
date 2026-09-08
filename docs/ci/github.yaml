@@ -279,10 +279,6 @@ jobs:
           # Context lines (only for *_WITH_CONTEXT modes).
           REVIEW__CONTEXT_LINES: "10"
 
-          # Markers for changes in output.
-          REVIEW__REVIEW_ADDED_MARKER: " # added"
-          REVIEW__REVIEW_REMOVED_MARKER: " # removed"
-
           # Optional filters:
           # REVIEW__ALLOW_CHANGES: '["src/*", "lib/*"]'
           # REVIEW__IGNORE_CHANGES: '["docs/*", "README.md"]'

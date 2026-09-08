@@ -1,7 +1,6 @@
 from pathlib import Path
 
-from ai_review.config import settings
-from ai_review.libs.diff.models import Diff, DiffFile, DiffLineType
+from ai_review.libs.diff.models import Diff, DiffFile
 from ai_review.libs.logger import get_logger
 from ai_review.services.git.service import GitService
 
@@ -49,11 +48,3 @@ def read_snapshot(file_path: str, *, base_sha: str | None = None, head_sha: str 
     except Exception as e:
         logger.warning(f"Workspace read failed for {file_path}: {e}")
         return None
-
-
-def marker_for_line(line_type: DiffLineType | None = None, *, added: bool = False, removed: bool = False) -> str:
-    if (line_type is DiffLineType.ADDED) or added:
-        return settings.review.review_added_marker
-    if (line_type is DiffLineType.REMOVED) or removed:
-        return settings.review.review_removed_marker
-    return ""

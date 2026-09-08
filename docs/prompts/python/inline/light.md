@@ -11,7 +11,8 @@ Highlight actionable issues without overemphasizing style or micro-optimizations
 
 ### What to Review
 
-- Review only lines marked with `# added` or `# removed`.
+- Review changed lines identified by the structural `+<line_number>:` and `-<line_number>:` prefixes.
+- Create comments only for `+` lines; the prefixes and line numbers are not source code.
 - Ignore unchanged context unless it directly affects modified code.
 
 ---

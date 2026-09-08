@@ -11,7 +11,7 @@ from ai_review.services.vcs.types import ReviewThreadSchema, ThreadKind, ReviewC
 
 @pytest.mark.usefixtures("fake_prompts")
 def test_build_inline_request_includes_prompts_and_diff(fake_prompt_context: PromptContextSchema) -> None:
-    diff = DiffFileSchema(file="foo.py", diff="+ added line\n- removed line")
+    diff = DiffFileSchema(file="foo.py", diff="+ added line\n- removed line", added_lines=set())
     result = PromptService.build_inline_request(diff, fake_prompt_context)
 
     assert "GLOBAL_INLINE" in result
@@ -24,8 +24,8 @@ def test_build_inline_request_includes_prompts_and_diff(fake_prompt_context: Pro
 @pytest.mark.usefixtures("fake_prompts")
 def test_build_summary_request_includes_prompts_and_diffs(fake_prompt_context: PromptContextSchema) -> None:
     diffs = [
-        DiffFileSchema(file="a.py", diff="+ foo"),
-        DiffFileSchema(file="b.py", diff="- bar"),
+        DiffFileSchema(file="a.py", diff="+ foo", added_lines=set()),
+        DiffFileSchema(file="b.py", diff="- bar", added_lines=set()),
     ]
     result = PromptService.build_summary_request(diffs, fake_prompt_context)
 
@@ -51,8 +51,8 @@ def test_build_summary_request_empty_list(fake_prompt_context: PromptContextSche
 @pytest.mark.usefixtures("fake_prompts")
 def test_build_context_request_includes_prompts_and_diffs(fake_prompt_context: PromptContextSchema) -> None:
     diffs = [
-        DiffFileSchema(file="a.py", diff="+ foo"),
-        DiffFileSchema(file="b.py", diff="- bar"),
+        DiffFileSchema(file="a.py", diff="+ foo", added_lines=set()),
+        DiffFileSchema(file="b.py", diff="- bar", added_lines=set()),
     ]
     result = PromptService.build_context_request(diffs, fake_prompt_context)
 
@@ -114,7 +114,7 @@ def test_build_system_summary_request_empty(
 
 @pytest.mark.usefixtures("fake_prompts")
 def test_diff_placeholders_are_not_replaced(fake_prompt_context: PromptContextSchema) -> None:
-    diffs = [DiffFileSchema(file="x.py", diff='print("<<review_title>>")')]
+    diffs = [DiffFileSchema(file="x.py", diff='print("<<review_title>>")', added_lines=set())]
     result = PromptService.build_summary_request(diffs, fake_prompt_context)
 
     assert "<<review_title>>" in result
@@ -159,7 +159,7 @@ def test_prepare_prompt_skips_normalization(
 
 @pytest.mark.usefixtures("fake_prompts")
 def test_build_inline_reply_request_includes_conversation_and_diff(fake_prompt_context: PromptContextSchema) -> None:
-    diff = DiffFileSchema(file="foo.py", diff="+ added\n- removed")
+    diff = DiffFileSchema(file="foo.py", diff="+ added\n- removed", added_lines=set())
     thread = ReviewThreadSchema(
         id="t1",
         kind=ThreadKind.INLINE,
@@ -187,7 +187,7 @@ def test_build_inline_reply_request_includes_conversation_and_diff(fake_prompt_c
 def test_build_summary_reply_request_includes_conversation_and_changes(
         fake_prompt_context: PromptContextSchema
 ) -> None:
-    diffs = [DiffFileSchema(file="a.py", diff="+ foo")]
+    diffs = [DiffFileSchema(file="a.py", diff="+ foo", added_lines=set())]
     thread = ReviewThreadSchema(
         id="t2",
         kind=ThreadKind.SUMMARY,

@@ -10,7 +10,7 @@ from ai_review.libs.diff.models import (
     DiffLineType,
     FileMode,
 )
-from ai_review.services.diff import renderers, tools
+from ai_review.services.diff import renderers
 
 
 # ---------- fixtures ----------
@@ -67,20 +67,6 @@ def sample_diff_file() -> DiffFile:
     )
 
 
-@pytest.fixture(autouse=True)
-def patch_marker(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Patch marker_for_line to use simple markers (# added / # removed)."""
-
-    def fake_marker(line_type=None, *, added: bool = False, removed: bool = False) -> str:
-        if added or line_type is DiffLineType.ADDED:
-            return " # added"
-        if removed or line_type is DiffLineType.REMOVED:
-            return " # removed"
-        return ""
-
-    monkeypatch.setattr(tools, "marker_for_line", fake_marker)
-
-
 # ---------- tests: FULL FILE ----------
 
 def test_build_full_file_current(monkeypatch: pytest.MonkeyPatch, sample_diff_file: DiffFile) -> None:
@@ -89,7 +75,22 @@ def test_build_full_file_current(monkeypatch: pytest.MonkeyPatch, sample_diff_fi
         lambda *_, **__: "keep A\nkeep B\nadded me",
     )
     out = renderers.build_full_file_current(sample_diff_file, "x", head_sha="HEAD")
-    assert out == "1: keep A\n2: keep B\n3: added me # added"
+    assert out == " 1: keep A\n 2: keep B\n+3: added me"
+
+
+def test_build_full_file_current_keeps_literal_marker_as_source_text(
+        monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "ai_review.services.diff.renderers.read_snapshot",
+        lambda *_, **__: "value # added",
+    )
+    out = renderers.render_plain_numbered(
+        ["value # added"],
+        {1},
+        marker_type=renderers.MarkerType.ADDED,
+    )
+    assert out == "+1: value # added"
 
 
 def test_build_full_file_previous(monkeypatch: pytest.MonkeyPatch, sample_diff_file: DiffFile) -> None:
@@ -98,16 +99,16 @@ def test_build_full_file_previous(monkeypatch: pytest.MonkeyPatch, sample_diff_f
         lambda *_, **__: "keep A\nremove me\nkeep B",
     )
     out = renderers.build_full_file_previous(sample_diff_file, "x", base_sha="BASE")
-    assert out == "1: keep A\n2: remove me # removed\n3: keep B"
+    assert out == " 1: keep A\n-2: remove me\n 3: keep B"
 
 
 def test_build_full_file_diff(sample_diff_file: DiffFile) -> None:
     out = renderers.build_full_file_diff(sample_diff_file)
     assert out == (
         " 1: keep A\n"
-        "-2: remove me # removed\n"
+        "-2: remove me\n"
         " 2: keep B\n"
-        "+3: added me # added"
+        "+3: added me"
     )
 
 
@@ -118,7 +119,7 @@ def test_build_only_added(sample_diff_file: DiffFile) -> None:
     Should render only added lines.
     """
     out = renderers.build_only_added(sample_diff_file)
-    assert out == "+3: added me # added"
+    assert out == "+3: added me"
 
 
 def test_build_only_removed(sample_diff_file: DiffFile) -> None:
@@ -126,7 +127,7 @@ def test_build_only_removed(sample_diff_file: DiffFile) -> None:
     Should render only removed lines.
     """
     out = renderers.build_only_removed(sample_diff_file)
-    assert out == "-2: remove me # removed"
+    assert out == "-2: remove me"
 
 
 def test_build_added_and_removed(sample_diff_file: DiffFile) -> None:
@@ -134,7 +135,7 @@ def test_build_added_and_removed(sample_diff_file: DiffFile) -> None:
     Should render both removed and added lines, in hunk order.
     """
     out = renderers.build_added_and_removed(sample_diff_file)
-    assert out == "-2: remove me # removed\n+3: added me # added"
+    assert out == "-2: remove me\n+3: added me"
 
 
 # ---------- tests: *_WITH_CONTEXT ----------
@@ -144,7 +145,7 @@ def test_build_only_added_with_context(sample_diff_file: DiffFile) -> None:
     Should render added lines plus unchanged context lines within ±1.
     """
     out = renderers.build_only_added_with_context(sample_diff_file, context=1)
-    assert out == " 2: keep B\n+3: added me # added"
+    assert out == " 2: keep B\n+3: added me"
 
 
 def test_build_only_removed_with_context(sample_diff_file: DiffFile) -> None:
@@ -152,7 +153,7 @@ def test_build_only_removed_with_context(sample_diff_file: DiffFile) -> None:
     Should render removed lines plus unchanged context lines within ±1.
     """
     out = renderers.build_only_removed_with_context(sample_diff_file, context=1)
-    assert out == " 1: keep A\n-2: remove me # removed\n 2: keep B"
+    assert out == " 1: keep A\n-2: remove me\n 2: keep B"
 
 
 def test_build_added_and_removed_with_context(sample_diff_file: DiffFile) -> None:
@@ -162,9 +163,9 @@ def test_build_added_and_removed_with_context(sample_diff_file: DiffFile) -> Non
     out = renderers.build_added_and_removed_with_context(sample_diff_file, context=1)
     assert out == (
         " 1: keep A\n"
-        "-2: remove me # removed\n"
+        "-2: remove me\n"
         " 2: keep B\n"
-        "+3: added me # added"
+        "+3: added me"
     )
 
 

@@ -37,8 +37,6 @@ review:
   context_lines: 10
   allow_changes: [ ]
   ignore_changes: [ ]
-  review_added_marker: " # added"
-  review_removed_marker: " # removed"
 
 logger:
   level: "INFO"

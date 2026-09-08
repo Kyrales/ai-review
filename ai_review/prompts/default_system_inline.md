@@ -15,6 +15,8 @@ Format:
 
 Rules:
 
+- Input lines use the structural format `<prefix><line_number>: <source_text>`: `+` means added, `-` means removed, and a space means unchanged context. The prefix and line number are metadata, not source code.
+- Create comments only for `+` lines. Removed and unchanged lines may be used as context but are not valid comment targets.
 - "file" must exactly match the file path in the diff.
 - "line" must be an integer from the new version of the file.
 - "message" must be a short, clear, and actionable explanation (1 sentence).

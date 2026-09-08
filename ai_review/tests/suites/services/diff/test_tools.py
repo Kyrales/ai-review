@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from ai_review.libs.diff.models import Diff, DiffFile, DiffHunk, DiffRange, DiffLineType, FileMode
+from ai_review.libs.diff.models import Diff, DiffFile, DiffHunk, DiffRange, FileMode
 from ai_review.services.diff import tools
 from ai_review.tests.fixtures.services.git import FakeGitService
 
@@ -105,23 +105,3 @@ def test_read_snapshot_returns_none_if_missing(
     monkeypatch.setattr(tools, "GitService", lambda: fake_git_service)
 
     assert tools.read_snapshot(str(tmp_path / "nope.txt")) is None
-
-
-# ---------- marker_for_line ----------
-
-def test_marker_for_line_added(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tools.settings.review, "review_added_marker", "# A")
-    assert "# A" in tools.marker_for_line(DiffLineType.ADDED)
-    assert "# A" in tools.marker_for_line(added=True)
-
-
-def test_marker_for_line_removed(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tools.settings.review, "review_removed_marker", "# R")
-    assert "# R" in tools.marker_for_line(DiffLineType.REMOVED)
-    assert "# R" in tools.marker_for_line(removed=True)
-
-
-def test_marker_for_line_empty(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(tools.settings.review, "review_added_marker", "# A")
-    monkeypatch.setattr(tools.settings.review, "review_removed_marker", "# R")
-    assert tools.marker_for_line() == ""

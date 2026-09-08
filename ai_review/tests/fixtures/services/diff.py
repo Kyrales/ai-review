@@ -25,7 +25,7 @@ class FakeDiffService(DiffServiceProtocol):
             "render_file",
             {"file": file, "raw_diff": raw_diff, "base_sha": base_sha, "head_sha": head_sha},
         ))
-        return DiffFileSchema(file=file, diff=f"FAKE_DIFF_CONTENT for {file}")
+        return DiffFileSchema(file=file, diff=f"FAKE_DIFF_CONTENT for {file}", added_lines={1})
 
     def render_files(
             self,
@@ -38,7 +38,7 @@ class FakeDiffService(DiffServiceProtocol):
             "render_files",
             {"git": git, "files": files, "base_sha": base_sha, "head_sha": head_sha},
         ))
-        return [DiffFileSchema(file=file, diff=f"FAKE_DIFF for {file}") for file in files]
+        return [DiffFileSchema(file=file, diff=f"FAKE_DIFF for {file}", added_lines={1}) for file in files]
 
 
 @pytest.fixture

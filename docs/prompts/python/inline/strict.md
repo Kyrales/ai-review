@@ -11,7 +11,8 @@ Focus on robust error handling, clarity, and adherence to Pythonic best practice
 
 ### What to Review
 
-- Examine only lines marked with `# added` or `# removed`.
+- Examine changed lines identified by the structural `+<line_number>:` and `-<line_number>:` prefixes.
+- Create comments only for `+` lines; the prefixes and line numbers are not source code.
 - Ignore unchanged context unless it directly affects modified logic.
 
 ---

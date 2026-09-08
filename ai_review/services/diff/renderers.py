@@ -2,8 +2,8 @@
 Renderers for diff views.
 
 Supported build modes:
-- FULL_FILE_CURRENT          snapshot after changes (+ markers for added)
-- FULL_FILE_PREVIOUS         snapshot before changes (+ markers for removed)
+- FULL_FILE_CURRENT          snapshot after changes (+ prefixes for added)
+- FULL_FILE_PREVIOUS         snapshot before changes (- prefixes for removed)
 - FULL_FILE_DIFF             full unified diff (+, -, unchanged)
 - ONLY_ADDED                 only added lines
 - ONLY_REMOVED               only removed lines
@@ -16,7 +16,7 @@ from enum import Enum
 from typing import Iterable
 
 from ai_review.libs.diff.models import DiffFile, DiffLineType
-from ai_review.services.diff.tools import normalize_file_path, marker_for_line, read_snapshot
+from ai_review.services.diff.tools import normalize_file_path, read_snapshot
 
 
 class MarkerType(Enum):
@@ -71,17 +71,17 @@ def build_added_and_removed_with_context(file: DiffFile | None, context: int) ->
 
 
 def render_plain_numbered(lines: Iterable[str], changed: set[int], marker_type: MarkerType) -> str:
-    def choose_marker(line_no: int) -> str:
+    def line_prefix(line_no: int) -> str:
         if line_no not in changed:
-            return ""
+            return " "
         if marker_type is MarkerType.ADDED:
-            return marker_for_line(added=True)
+            return "+"
         if marker_type is MarkerType.REMOVED:
-            return marker_for_line(removed=True)
-        return ""
+            return "-"
+        return " "
 
     return "\n".join(
-        f"{line_no}: {content}{choose_marker(line_no)}"
+        f"{line_prefix(line_no)}{line_no}: {content}"
         for line_no, content in enumerate(lines, start=1)
     )
 
@@ -135,12 +135,12 @@ def render_unified(
         for line in hunk.lines:
             if line.type is DiffLineType.ADDED:
                 if include_added:
-                    lines_out.append(f"+{new_no}: {line.content}{marker_for_line(DiffLineType.ADDED)}")
+                    lines_out.append(f"+{new_no}: {line.content}")
                 new_no += 1
 
             elif line.type is DiffLineType.REMOVED:
                 if include_removed:
-                    lines_out.append(f"-{old_no}: {line.content}{marker_for_line(DiffLineType.REMOVED)}")
+                    lines_out.append(f"-{old_no}: {line.content}")
                 old_no += 1
 
             else:

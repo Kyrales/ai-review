@@ -14,9 +14,19 @@ from ai_review.services.review.runner.types import ReviewRunnerProtocol
 from ai_review.services.vcs.types import ReviewInfoSchema, VCSClientProtocol
 from ai_review.config import settings
 from ai_review.libs.constants.vcs_provider import VCSProvider
+from ai_review.libs.config.review import ReviewMode
 from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message
 
 logger = get_logger("INLINE_REVIEW_RUNNER")
+
+INLINE_COMMENTABLE_MODES = {
+    ReviewMode.FULL_FILE_DIFF,
+    ReviewMode.FULL_FILE_CURRENT,
+    ReviewMode.ONLY_ADDED,
+    ReviewMode.ADDED_AND_REMOVED,
+    ReviewMode.ONLY_ADDED_WITH_CONTEXT,
+    ReviewMode.ADDED_AND_REMOVED_WITH_CONTEXT,
+}
 
 
 class InlineReviewRunner(ReviewRunnerProtocol):
@@ -47,6 +57,11 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         if not raw_diff.strip():
             logger.debug(f"No diff for {file}, skipping")
             return InlineCommentListSchema(root=[])
+        if settings.review.mode not in INLINE_COMMENTABLE_MODES:
+            logger.warning(
+                f"Skipping inline review for {file}: mode {settings.review.mode} has no commentable added lines"
+            )
+            return InlineCommentListSchema(root=[])
 
         rendered_file = self.diff.render_file(
             file=file,
@@ -60,6 +75,16 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         prompt_result = await self.review_llm_gateway.ask(prompt, prompt_system)
 
         comments = self.inline_comment.parse_model_output(prompt_result).dedupe()
+        valid_comments = [
+            comment for comment in comments.root
+            if comment.file == file
+            and comment.line in rendered_file.added_lines
+        ]
+        if len(valid_comments) != len(comments.root):
+            logger.warning(
+                f"Discarded {len(comments.root) - len(valid_comments)} inline comments outside added lines in {file}"
+            )
+        comments.root = valid_comments
         comments.root = self.policy.apply_for_inline_comments(comments.root)
         if not comments.root:
             logger.info(f"No inline comments for file: {file}")
