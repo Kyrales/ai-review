@@ -162,6 +162,41 @@ async def test_chat_retries_conflicting_done_event(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_chat_retries_mismatched_done_and_delta(monkeypatch):
+    attempts = 0
+    completed = {"type": "response.completed", "response": _response_payload()}
+
+    async def handler(_: Request) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            events = [
+                ("response.output_text.delta", {"type": "response.output_text.delta", "delta": "one"}),
+                ("response.output_text.done", {"type": "response.output_text.done", "text": "two"}),
+                ("response.completed", completed),
+            ]
+        else:
+            events = [("response.completed", completed)]
+        body = "".join(
+            f"event: {name}\ndata: {json.dumps(payload)}\n\n" for name, payload in events
+        ) + "data: [DONE]\n\n"
+        return Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async def no_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("ai_review.clients.openai.v2.client.asyncio.sleep", no_sleep)
+    client = OpenAIV2HTTPClient(AsyncClient(
+        base_url="https://codex.example/backend-api/codex", transport=MockTransport(handler),
+    ))
+
+    response = await client.chat(OpenAIResponsesRequestSchema(model="test", input=[]))
+
+    assert response.first_text == "Замечание"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
 async def test_chat_reconstructs_text_when_completed_output_is_empty():
     completed = {
         "type": "response.completed",

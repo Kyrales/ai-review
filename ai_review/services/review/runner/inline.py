@@ -1,3 +1,5 @@
+import asyncio
+import re
 from collections.abc import Callable
 
 from ai_review.libs.asynchronous.gather import bounded_gather
@@ -36,16 +38,25 @@ def _split_rendered_file(
         rendered_file,
         max_prompt_chars: int,
         build_prompt: Callable[[DiffFileSchema], str],
-):
+) -> list[DiffFileSchema]:
     """Split a rendered file by complete lines without changing source numbers."""
-    import re
-
     lines = rendered_file.diff.splitlines()
     if not lines:
         return [rendered_file]
 
     parts = []
     current: list[str] = []
+    empty_prompt_length = len(build_prompt(DiffFileSchema(
+        file=rendered_file.file,
+        diff="",
+        added_lines=set(),
+    )))
+    if empty_prompt_length > max_prompt_chars:
+        raise ValueError(
+            f"Inline prompt preamble for {rendered_file.file} exceeds prompt limit "
+            f"({max_prompt_chars} chars)"
+        )
+    current_length = 0
     line_pattern = re.compile(r"^[+ ](\d+): ")
 
     def make_part(part_lines: list[str]):
@@ -60,21 +71,26 @@ def _split_rendered_file(
             added_lines=added_lines,
         )
 
-    for line in lines:
-        current.append(line)
-        candidate = make_part(current)
-        if len(current) > 1 and len(build_prompt(candidate)) > max_prompt_chars:
-            current.pop()
-            parts.append(make_part(current))
-            current = [line]
-            candidate = make_part(current)
-        if len(build_prompt(candidate)) > max_prompt_chars:
+    def append_part(part_lines: list[str]) -> None:
+        part = make_part(part_lines)
+        if len(build_prompt(part)) > max_prompt_chars:
             raise ValueError(
                 f"Rendered diff line for {rendered_file.file} exceeds inline prompt limit "
                 f"({max_prompt_chars} chars)"
             )
+        parts.append(part)
+
+    for line in lines:
+        line_length = len(line) + (1 if current else 0)
+        if current and empty_prompt_length + current_length + line_length > max_prompt_chars:
+            append_part(current)
+            current = [line]
+            current_length = len(line)
+        else:
+            current.append(line)
+            current_length += line_length
     if current:
-        parts.append(make_part(current))
+        append_part(current)
     return parts
 
 
@@ -187,18 +203,21 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         logger.info(f"Starting inline review: {len(review_info.changed_files)} files changed")
 
         changed_files = self.policy.apply_for_files(review_info.changed_files)
-        results = await bounded_gather([
-            self.analyze_file(changed_file, review_info)
-            for changed_file in changed_files
-        ])
-        failures = [result for result in results if isinstance(result, BaseException)]
-        if failures:
-            self.review_comment_gateway.inline_review_failures += len(failures)
-            for failure in failures:
-                logger.warning(f"Skipped inline review file after failure: {failure}")
+        semaphore = asyncio.Semaphore(settings.core.concurrency)
 
-        for file, comments in zip(changed_files, results, strict=True):
+        async def review_file(file: str):
+            async with semaphore:
+                try:
+                    return file, await self.analyze_file(file, review_info)
+                except Exception as error:
+                    return file, error
+
+        tasks = [asyncio.create_task(review_file(changed_file)) for changed_file in changed_files]
+        for completed in asyncio.as_completed(tasks):
+            file, comments = await completed
             if isinstance(comments, BaseException):
+                self.review_comment_gateway.inline_review_failures += 1
+                logger.warning(f"Skipped inline review file after failure ({file}): {comments}")
                 continue
             if comments.root:
                 logger.info(f"Posting {len(comments.root)} inline comments to {file}")

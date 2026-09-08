@@ -28,7 +28,7 @@ class ReviewDirectLLMGateway(ReviewLLMGatewayProtocol):
             result = None
             for attempt in range(3):
                 result = await self.llm.chat(prompt, prompt_system)
-                if result.text:
+                if result.text and result.text.strip():
                     break
                 logger.warning(
                     f"LLM returned an empty response (prompt length={len(prompt)} chars, "
@@ -36,7 +36,7 @@ class ReviewDirectLLMGateway(ReviewLLMGatewayProtocol):
                 )
                 if attempt < 2:
                     await asyncio.sleep(0.5 * (2 ** attempt))
-            if result is None or not result.text:
+            if result is None or not result.text or not result.text.strip():
                 raise RuntimeError("LLM returned an empty response")
 
             report = self.cost.calculate(
