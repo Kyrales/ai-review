@@ -108,7 +108,10 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
     consume()
 
     if completed is None:
-        raise OpenAIV2ProtocolError("SSE has no response.completed event")
+        raise OpenAIV2ProtocolError(
+            "SSE has no response.completed event",
+            retryable=True,
+        )
     delta_text = "".join(text_deltas)
     if done_text is not None and delta_text and done_text != delta_text:
         raise OpenAIV2ProtocolError("SSE final text does not match streamed deltas", retryable=True)

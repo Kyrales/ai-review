@@ -70,6 +70,34 @@ async def test_chat_rejects_sse_without_completed_response():
 
 
 @pytest.mark.asyncio
+async def test_chat_retries_sse_without_completed_response(monkeypatch):
+    attempts = 0
+    completed = {"type": "response.completed", "response": _response_payload()}
+
+    async def handler(_: Request) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            body = "event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\ndata: [DONE]\n\n"
+        else:
+            body = f"event: response.completed\ndata: {json.dumps(completed)}\n\n"
+        return Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async def no_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("ai_review.clients.openai.v2.client.asyncio.sleep", no_sleep)
+    client = OpenAIV2HTTPClient(AsyncClient(
+        base_url="https://codex.example/backend-api/codex", transport=MockTransport(handler),
+    ))
+
+    response = await client.chat(OpenAIResponsesRequestSchema(model="test", input=[]))
+
+    assert response.first_text == "Замечание"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
 async def test_chat_retries_retryable_sse_failure(monkeypatch):
     attempts = 0
     failed = {

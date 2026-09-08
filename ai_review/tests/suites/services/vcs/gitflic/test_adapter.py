@@ -52,6 +52,23 @@ def test_find_position_for_large_new_file_without_api_lines():
     }
 
 
+def test_find_position_for_large_modified_file_without_api_lines():
+    change = make_change()
+    change.changeType = "MODIFY"
+    change.lines = []
+    change.addedLinesCount = 69
+
+    position = find_position([change], "src/cf/sppr/a.bsl", 871)
+
+    assert position.model_dump() == {
+        "newLine": 871,
+        "oldLine": 871,
+        "newPath": "src/cf/sppr/a.bsl",
+        "oldPath": "src/cf/sppr/a.bsl",
+        "message": "",
+    }
+
+
 def test_find_position_preserves_old_line_for_replaced_line():
     change = make_change()
     change.lines[0] = GitFlicChangeLine(

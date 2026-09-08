@@ -24,6 +24,7 @@ class FakeReviewCommentGateway(ReviewCommentGatewayProtocol):
         self.inline_review_failures = 0
         self.inline_publication_failures = 0
         self.inline_publication_warnings = 0
+        self.inline_review_executed = False
 
         fake_user = UserSchema(id="u1", username="tester", name="Tester")
 
