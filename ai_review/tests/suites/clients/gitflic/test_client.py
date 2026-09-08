@@ -51,6 +51,11 @@ def test_create_discussion_allows_general_comment_without_position() -> None:
     [
         {"newLine": 12, "newPath": "new.py", "oldPath": "old.py"},
         {"oldLine": 11, "newPath": "new.py", "oldPath": "old.py"},
+        {"newLine": 12, "oldLine": 0, "newPath": "new.py", "oldPath": "old.py"},
+        {"newLine": None, "oldLine": 0, "newPath": "new.py", "oldPath": "old.py"},
+        {"newLine": 12, "oldLine": None, "newPath": "new.py", "oldPath": "old.py"},
+        {"newLine": 12, "oldLine": 0, "newPath": None, "oldPath": "old.py"},
+        {"newLine": 12, "oldLine": 0, "newPath": "new.py", "oldPath": None},
         {"newLine": None, "oldLine": None, "newPath": None, "oldPath": None},
     ],
 )
@@ -167,6 +172,22 @@ async def test_get_discussions_reads_all_pages() -> None:
     assert [item.uuid for item in result] == ["d1", "d2"]
     assert [item.replies[0].uuid for item in result] == ["r1", "r2"]
     assert requested_pages == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_get_discussions_accepts_empty_page_without_embedded() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={
+            "page": {"size": 100, "totalElements": 0, "totalPages": 0, "number": 0},
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.get_discussions("rt-vt", "sppr", 52)
+    finally:
+        await client.aclose()
+
+    assert result == []
 
 
 @pytest.mark.asyncio
@@ -319,7 +340,7 @@ async def test_general_discussion_sends_only_message() -> None:
 
 
 @pytest.mark.asyncio
-async def test_inline_discussion_sends_nullable_old_line() -> None:
+async def test_inline_discussion_sends_positive_old_line_for_added_file() -> None:
     requests: list[httpx.Request] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -330,13 +351,13 @@ async def test_inline_discussion_sends_nullable_old_line() -> None:
     try:
         await client.create_discussion(
             "rt-vt", "sppr", 41, GitFlicCreateDiscussion(
-                newLine=12, oldLine=None, newPath="new.py", oldPath="old.py", message="Inline"
+                newLine=12, oldLine=12, newPath="new.py", oldPath="/dev/null", message="Inline"
             )
         )
     finally:
         await client.aclose()
 
     assert requests[0].content == (
-        b'{"newLine":12,"oldLine":null,"newPath":"new.py",'
-        b'"oldPath":"old.py","message":"Inline"}'
+        b'{"newLine":12,"oldLine":12,"newPath":"new.py",'
+        b'"oldPath":"/dev/null","message":"Inline"}'
     )

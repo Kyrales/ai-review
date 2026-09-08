@@ -93,8 +93,13 @@ class GitFlicCreateDiscussion(GitFlicModel):
         supplied = position_fields & self.model_fields_set
         if supplied and supplied != position_fields:
             raise ValueError("GitFlic discussion position requires all four fields")
-        if supplied and (self.newLine is None or self.newPath is None or self.oldPath is None):
-            raise ValueError("GitFlic discussion position requires newLine, newPath and oldPath")
+        if supplied and (
+            self.newLine is None or self.oldLine is None
+            or self.newPath is None or self.oldPath is None
+        ):
+            raise ValueError("GitFlic discussion position cannot contain null fields")
+        if supplied and (self.newLine < 1 or self.oldLine < 1):
+            raise ValueError("GitFlic discussion line numbers must be positive")
         return self
 
 
@@ -112,6 +117,19 @@ class GitFlicDiscussionsEmbedded(GitFlicModel):
     restDiscussionModelList: list[GitFlicDiscussionEnvelope]
 
 
+def empty_discussions_embedded() -> GitFlicDiscussionsEmbedded:
+    return GitFlicDiscussionsEmbedded(restDiscussionModelList=[])
+
+
 class GitFlicDiscussionsPage(GitFlicModel):
-    embedded: GitFlicDiscussionsEmbedded = Field(alias="_embedded")
+    embedded: GitFlicDiscussionsEmbedded = Field(
+        default_factory=empty_discussions_embedded,
+        alias="_embedded",
+    )
     page: GitFlicPage
+
+    @model_validator(mode="after")
+    def require_embedded_for_nonempty_page(self) -> "GitFlicDiscussionsPage":
+        if self.page.totalElements and "embedded" not in self.model_fields_set:
+            raise ValueError("GitFlic omitted _embedded for a nonempty discussions page")
+        return self

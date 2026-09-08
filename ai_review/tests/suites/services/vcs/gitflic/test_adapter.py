@@ -19,16 +19,76 @@ def make_change(*, new_path: str = "src/cf/sppr/a.bsl", old_path: str | None = N
     )
 
 
-def test_find_position_for_added_line_contains_all_location_fields():
-    position = find_position([make_change()], "src/cf/sppr/a.bsl", 12)
+def test_find_position_for_new_file_uses_positive_old_line():
+    position = find_position(
+        [make_change(old_path="/dev/null")],
+        "src/cf/sppr/a.bsl",
+        12,
+    )
 
     assert position.model_dump() == {
         "newLine": 12,
-        "oldLine": None,
+        "oldLine": 12,
         "newPath": "src/cf/sppr/a.bsl",
-        "oldPath": "src/cf/sppr/a.bsl",
+        "oldPath": "/dev/null",
         "message": "",
     }
+
+
+def test_find_position_preserves_old_line_for_replaced_line():
+    change = make_change()
+    change.lines[0] = GitFlicChangeLine(
+        body="replacement",
+        addLineNumber=12,
+        removeLineNumber=11,
+        op="replace_add",
+        type="line",
+    )
+
+    position = find_position([change], "src/cf/sppr/a.bsl", 12)
+
+    assert position.oldLine == 11
+
+
+def test_find_position_uses_previous_old_line_for_inserted_line():
+    change = make_change()
+    change.lines = [
+        GitFlicChangeLine(
+            body="context",
+            addLineNumber=38,
+            removeLineNumber=38,
+            op="context",
+            type="line",
+        ),
+        GitFlicChangeLine(body="inserted", addLineNumber=39, op="add", type="line"),
+    ]
+
+    position = find_position([change], "src/cf/sppr/a.bsl", 39)
+
+    assert position.oldLine == 38
+
+
+def test_find_position_uses_removed_line_across_replace_hunk_separator():
+    change = make_change()
+    change.lines = [
+        GitFlicChangeLine(
+            body="removed",
+            removeLineNumber=38,
+            op="replace_removed",
+            type="line",
+        ),
+        GitFlicChangeLine(body="", op="none", type="separator"),
+        GitFlicChangeLine(
+            body="replacement",
+            addLineNumber=39,
+            op="replace_add",
+            type="line",
+        ),
+    ]
+
+    position = find_position([change], "src/cf/sppr/a.bsl", 39)
+
+    assert position.oldLine == 38
 
 
 def test_find_position_rejects_deleted_and_context_lines():
