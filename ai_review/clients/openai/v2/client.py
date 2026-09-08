@@ -61,9 +61,11 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
             raise OpenAIV2ProtocolError("SSE event contains invalid JSON") from error
         payload_type = payload.get("type")
         if event_name and event_name != "codex.keepalive" and payload_type and event_name != payload_type:
-            raise OpenAIV2ProtocolError("SSE event name does not match payload type")
+            raise OpenAIV2ProtocolError(
+                "SSE event name does not match payload type",
+                retryable=True,
+            )
         if payload_type in {"response.failed", "response.incomplete"}:
-            error = (payload.get("response") or {}).get("error") or {}
             retryable = payload_type == "response.failed"
             raise OpenAIV2ProtocolError(
                 f"SSE terminated with {payload_type}", retryable=retryable,
@@ -85,7 +87,10 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
             done_text = text
         if payload_type == "response.completed":
             if completed is not None:
-                raise OpenAIV2ProtocolError("SSE contains multiple response.completed events")
+                raise OpenAIV2ProtocolError(
+                    "SSE contains multiple response.completed events",
+                    retryable=True,
+                )
             completed = payload.get("response")
             if not isinstance(completed, dict):
                 raise OpenAIV2ProtocolError("response.completed has no response object")

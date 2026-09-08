@@ -131,6 +131,7 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
             has_warnings = (
                 getattr(self.review_comment_gateway, "inline_publication_warnings", 0)
                 or getattr(self.review_comment_gateway, "inline_review_failures", 0)
+                or getattr(self.review_comment_gateway, "inline_publication_failures", 0)
             )
             status = "complete_with_warnings" if has_warnings else "complete"
             summary.text = decorate_ai_message(

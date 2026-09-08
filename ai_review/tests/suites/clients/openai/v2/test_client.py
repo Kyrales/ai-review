@@ -197,6 +197,42 @@ async def test_chat_retries_mismatched_done_and_delta(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("broken_event", ["event_mismatch", "multiple_completed"])
+async def test_chat_retries_transient_sse_structure_error(monkeypatch, broken_event):
+    attempts = 0
+    completed = {"type": "response.completed", "response": _response_payload()}
+
+    async def handler(_: Request) -> Response:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1 and broken_event == "event_mismatch":
+            body = (
+                "event: response.output_text.delta\n"
+                "data: {\"type\": \"response.output_text.done\", \"text\": \"x\"}\n\n"
+            )
+        elif attempts == 1:
+            body = "".join(
+                f"event: response.completed\ndata: {json.dumps(completed)}\n\n" for _ in range(2)
+            )
+        else:
+            body = f"event: response.completed\ndata: {json.dumps(completed)}\n\n"
+        return Response(200, text=body, headers={"content-type": "text/event-stream"})
+
+    async def no_sleep(_: float) -> None:
+        pass
+
+    monkeypatch.setattr("ai_review.clients.openai.v2.client.asyncio.sleep", no_sleep)
+    client = OpenAIV2HTTPClient(AsyncClient(
+        base_url="https://codex.example/backend-api/codex", transport=MockTransport(handler),
+    ))
+
+    response = await client.chat(OpenAIResponsesRequestSchema(model="test", input=[]))
+
+    assert response.first_text == "Замечание"
+    assert attempts == 2
+
+
+@pytest.mark.asyncio
 async def test_chat_reconstructs_text_when_completed_output_is_empty():
     completed = {
         "type": "response.completed",

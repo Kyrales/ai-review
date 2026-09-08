@@ -118,6 +118,13 @@ def test_split_rendered_file_rejects_line_larger_than_budget():
         _split_rendered_file(rendered, 5, lambda part: part.diff)
 
 
+def test_split_rendered_file_checks_preamble_for_empty_diff():
+    rendered = DiffFileSchema(file="module.bsl", diff="", added_lines=set())
+
+    with pytest.raises(ValueError, match="preamble"):
+        _split_rendered_file(rendered, 5, lambda part: "prompt preamble")
+
+
 @pytest.mark.asyncio
 async def test_run_publishes_successful_files_when_another_file_fails(
         inline_review_runner: InlineReviewRunner,

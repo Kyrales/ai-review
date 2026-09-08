@@ -92,6 +92,31 @@ async def test_ask_retries_whitespace_response_before_success(
 
 
 @pytest.mark.asyncio
+async def test_ask_rejects_three_whitespace_responses(
+        monkeypatch,
+        review_direct_llm_gateway: ReviewDirectLLMGateway,
+        fake_llm_client: FakeLLMClient,
+):
+    calls = 0
+
+    async def chat(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        return ChatResultSchema(text=" \n")
+
+    fake_llm_client.chat = chat
+
+    async def sleep(*_args):
+        return None
+
+    monkeypatch.setattr("ai_review.services.review.gateway.review_direct_llm_gateway.asyncio.sleep", sleep)
+
+    with pytest.raises(RuntimeError, match="empty response"):
+        await review_direct_llm_gateway.ask("PROMPT", "SYSTEM_PROMPT")
+    assert calls == 3
+
+
+@pytest.mark.asyncio
 async def test_ask_passes_llm_tokens_to_calculate(
         review_direct_llm_gateway: ReviewDirectLLMGateway,
         fake_llm_client: FakeLLMClient,

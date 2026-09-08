@@ -41,11 +41,6 @@ def _split_rendered_file(
 ) -> list[DiffFileSchema]:
     """Split a rendered file by complete lines without changing source numbers."""
     lines = rendered_file.diff.splitlines()
-    if not lines:
-        return [rendered_file]
-
-    parts = []
-    current: list[str] = []
     empty_prompt_length = len(build_prompt(DiffFileSchema(
         file=rendered_file.file,
         diff="",
@@ -56,6 +51,11 @@ def _split_rendered_file(
             f"Inline prompt preamble for {rendered_file.file} exceeds prompt limit "
             f"({max_prompt_chars} chars)"
         )
+    if not lines:
+        return [rendered_file]
+
+    parts = []
+    current: list[str] = []
     current_length = 0
     line_pattern = re.compile(r"^[+ ](\d+): ")
 
@@ -136,7 +136,8 @@ class InlineReviewRunner(ReviewRunnerProtocol):
         )
         prompt_context = build_prompt_context_from_review_info(review_info)
         prompt_system = self.prompt.build_system_inline_request(prompt_context)
-        build_prompt = lambda part: self.prompt.build_inline_request(part, prompt_context)
+        def build_prompt(part: DiffFileSchema) -> str:
+            return self.prompt.build_inline_request(part, prompt_context)
         parts = _split_rendered_file(
             rendered_file,
             settings.review.max_inline_prompt_chars,
