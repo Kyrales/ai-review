@@ -32,6 +32,14 @@ def find_position(
                 )
             if item.removeLineNumber is not None:
                 previous_old_line = item.removeLineNumber
+        if change.changeType.upper() == "ADD" and 1 <= line <= change.addedLinesCount:
+            return GitFlicCreateDiscussion(
+                newLine=line,
+                oldLine=line,
+                newPath=change.newPath,
+                oldPath=change.oldPath,
+                message="",
+            )
     return None
 
 

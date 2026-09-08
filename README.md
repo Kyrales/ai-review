@@ -84,6 +84,11 @@ only runtime marker metadata published by the configured GitFlic user and
 rechecks a thread before resolving it. Keep source checkouts read-only and
 store YAML configuration and prompts in the protected control pipeline.
 
+GitFlic may omit `lines` for large added files even though line discussions
+remain supported. The provider derives safe positions for such new files and
+falls back to a general comment containing `path:line` when a position cannot
+be proven or GitFlic does not return the requested line binding.
+
 #### First GHCR publication
 
 The first push creates the `ghcr.io/kyrales/ai-review` package. A GitHub
