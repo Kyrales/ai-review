@@ -65,6 +65,20 @@ class ContextReviewRunner(ReviewRunnerProtocol):
         prompt_result = await self.review_llm_gateway.ask(prompt, prompt_system)
 
         comments = self.inline_comment.parse_model_output(prompt_result).dedupe()
+        added_lines = {
+            (rendered_file.file, line)
+            for rendered_file in rendered_files
+            for line in rendered_file.added_lines
+        }
+        valid_comments = [
+            comment for comment in comments.root
+            if (comment.file, comment.line) in added_lines
+        ]
+        if len(valid_comments) != len(comments.root):
+            logger.warning(
+                f"Discarded {len(comments.root) - len(valid_comments)} context comments outside added lines"
+            )
+        comments.root = valid_comments
         comments.root = self.policy.apply_for_context_comments(comments.root)
         if not comments.root:
             logger.info("No inline comments from context review")

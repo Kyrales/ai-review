@@ -45,6 +45,27 @@ async def test_partial_inline_then_summary_retry_is_terminal(
 
 
 @pytest.mark.asyncio
+async def test_current_run_findings_do_not_trigger_partial_recovery(
+        monkeypatch, summary_review_runner, fake_vcs_client, fake_review_comment_gateway,
+        fake_review_direct_llm_gateway,
+):
+    _gitflic(monkeypatch)
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=["file.py"], base_sha="b" * 40, head_sha=HEAD,
+    )
+    fake_vcs_client.responses["get_inline_comments"] = [ReviewCommentSchema(
+        id="f1", author=UserSchema(id="owner"),
+        body=decorate_ai_message("finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)),
+    )]
+    fake_review_comment_gateway.inline_review_executed = True
+
+    await summary_review_runner.run()
+
+    assert any(call[0] == "ask" for call in fake_review_direct_llm_gateway.calls)
+    assert _terminal_marker(fake_review_comment_gateway).status == "complete"
+
+
+@pytest.mark.asyncio
 async def test_old_or_untrusted_gitflic_comments_do_not_block_current_summary(
         monkeypatch, summary_review_runner, fake_vcs_client, fake_review_comment_gateway,
         fake_review_direct_llm_gateway,

@@ -200,6 +200,7 @@ class InlineReviewRunner(ReviewRunnerProtocol):
             logger.info(f"Detected {len(comments)} existing AI inline comments, skipping inline review")
             return
 
+        self.review_comment_gateway.inline_review_executed = True
         review_info = await self.vcs.get_review_info()
         logger.info(f"Starting inline review: {len(review_info.changed_files)} files changed")
 

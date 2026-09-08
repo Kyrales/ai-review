@@ -1,6 +1,7 @@
 import pytest
 
 from ai_review.services.review.runner.context import ContextReviewRunner
+from ai_review.services.review.internal.inline.schema import InlineCommentSchema
 from ai_review.services.vcs.types import ReviewCommentSchema
 from ai_review.tests.fixtures.services.cost import FakeCostService
 from ai_review.tests.fixtures.services.diff import FakeDiffService
@@ -98,6 +99,28 @@ async def test_run_skips_when_no_comments_after_llm(
     assert any(call[0] == "apply_for_context_comments" for call in fake_policy_service.calls)
     assert not any(call[0] == "process_inline_comments" for call in fake_review_comment_gateway.calls)
     assert not any(call[0] == "finalize" for call in fake_review_comment_gateway.calls)
+
+
+@pytest.mark.asyncio
+async def test_run_publishes_context_comments_only_for_added_lines(
+        context_review_runner: ContextReviewRunner,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    fake_review_comment_gateway.responses["get_inline_comments"] = []
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(file="file.py", line=1, message="added"),
+        InlineCommentSchema(file="file.py", line=2, message="unchanged"),
+    ]
+
+    await context_review_runner.run()
+
+    call = next(
+        call for call in fake_review_comment_gateway.calls
+        if call[0] == "process_inline_comments"
+    )
+    comments = call[1]["comments"].root
+    assert [(comment.file, comment.line) for comment in comments] == [("file.py", 1)]
 
 
 @pytest.mark.asyncio

@@ -87,7 +87,7 @@ class SummaryReviewRunner(ReviewRunnerProtocol):
             inline_comments = await self.review_comment_gateway.get_inline_comments()
         if settings.vcs.provider is VCSProvider.GITFLIC and self.has_current_marker(
                 inline_comments, MarkerKind.FINDING, review_info.head_sha,
-        ):
+        ) and not self.review_comment_gateway.inline_review_executed:
             await self.post_terminal_summary(
                 "Первичное ревью восстановлено частично: ранее опубликованные замечания сохранены, "
                 "оставшаяся часть inline-ревью повторно не создавалась.",
