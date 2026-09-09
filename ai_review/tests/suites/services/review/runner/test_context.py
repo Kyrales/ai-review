@@ -2,7 +2,8 @@ import pytest
 
 from ai_review.services.review.runner.context import ContextReviewRunner
 from ai_review.services.review.internal.inline.schema import InlineCommentSchema
-from ai_review.services.vcs.types import ReviewCommentSchema
+from ai_review.services.diff.schema import DiffFileSchema
+from ai_review.services.vcs.types import ReviewCommentSchema, ReviewInfoSchema
 from ai_review.tests.fixtures.services.cost import FakeCostService
 from ai_review.tests.fixtures.services.diff import FakeDiffService
 from ai_review.tests.fixtures.services.prompt import FakePromptService
@@ -121,6 +122,42 @@ async def test_run_publishes_context_comments_only_for_added_lines(
     )
     comments = call[1]["comments"].root
     assert [(comment.file, comment.line) for comment in comments] == [("file.py", 1)]
+
+
+@pytest.mark.asyncio
+async def test_run_discards_false_bsl_multiline_comment_finding(
+        context_review_runner: ContextReviewRunner,
+        fake_vcs_client: FakeVCSClient,
+        fake_git_service,
+        fake_diff_service: FakeDiffService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    file = "CommonModules/Test/Module.bsl"
+    fake_review_comment_gateway.responses["get_inline_comments"] = []
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=[file], base_sha="A", head_sha="B"
+    )
+    fake_git_service.responses["get_file_at_commit"] = (
+        'Text = "first\n|second\n// author note\n|third\n";'
+    )
+    fake_diff_service.render_files = lambda **_: [
+        DiffFileSchema(file=file, diff="FAKE_DIFF", added_lines={3})
+    ]
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(
+            file=file,
+            line=3,
+            message="Комментарий разрывает многострочный строковый литерал",
+        )
+    ]
+
+    await context_review_runner.run()
+
+    assert not any(
+        call[0] == "process_inline_comments"
+        for call in fake_review_comment_gateway.calls
+    )
 
 
 @pytest.mark.asyncio

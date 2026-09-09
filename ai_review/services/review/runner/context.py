@@ -1,6 +1,7 @@
 from ai_review.libs.logger import get_logger
 from ai_review.services.cost.types import CostServiceProtocol
 from ai_review.services.diff.types import DiffServiceProtocol
+from ai_review.services.diff.one_c import is_false_bsl_multiline_comment_finding
 from ai_review.services.git.types import GitServiceProtocol
 from ai_review.services.hook import hook
 from ai_review.services.policy.types import PolicyServiceProtocol
@@ -78,6 +79,27 @@ class ContextReviewRunner(ReviewRunnerProtocol):
             logger.warning(
                 f"Discarded {len(comments.root) - len(valid_comments)} context comments outside added lines"
             )
+        sources: dict[str, str | None] = {}
+        checked_comments = []
+        for comment in valid_comments:
+            if comment.file.lower().endswith(".bsl"):
+                if comment.file not in sources:
+                    sources[comment.file] = self.git.get_file_at_commit(
+                        comment.file, review_info.head_sha
+                    )
+                if is_false_bsl_multiline_comment_finding(
+                    sources[comment.file],
+                    file=comment.file,
+                    line=comment.line,
+                    message=comment.message,
+                ):
+                    continue
+            checked_comments.append(comment)
+        if len(checked_comments) != len(valid_comments):
+            logger.warning(
+                f"Discarded {len(valid_comments) - len(checked_comments)} known false BSL multiline-string context finding(s)"
+            )
+        valid_comments = checked_comments
         comments.root = valid_comments
         comments.root = self.policy.apply_for_context_comments(comments.root)
         if not comments.root:

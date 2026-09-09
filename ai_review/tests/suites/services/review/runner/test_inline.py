@@ -271,6 +271,41 @@ async def test_process_file_publishes_comments_only_for_added_lines(
 
 
 @pytest.mark.asyncio
+async def test_process_file_discards_false_bsl_multiline_comment_finding(
+        inline_review_runner: InlineReviewRunner,
+        fake_git_service: FakeGitService,
+        fake_diff_service: FakeDiffService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    file = "CommonModules/Test/Module.bsl"
+    fake_git_service.responses["get_diff_for_file"] = "FAKE_DIFF"
+    fake_git_service.responses["get_file_at_commit"] = (
+        'Text = "first\n|second\n// author note\n|third\n";'
+    )
+    fake_diff_service.render_file = lambda **_: DiffFileSchema(
+        file=file, diff="+3: // author note", added_lines={3}
+    )
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(
+            file=file,
+            line=3,
+            message="Комментарий разрывает многострочный строковый литерал",
+        )
+    ]
+
+    await inline_review_runner.process_file(
+        file,
+        ReviewInfoSchema(base_sha="a" * 40, head_sha="b" * 40),
+    )
+
+    assert not any(
+        call[0] == "process_inline_comments"
+        for call in fake_review_comment_gateway.calls
+    )
+
+
+@pytest.mark.asyncio
 async def test_run_does_not_finalize(
         inline_review_runner: InlineReviewRunner,
         fake_git_service: FakeGitService,
