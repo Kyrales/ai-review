@@ -1,12 +1,27 @@
 import os
 from uuid import UUID
 
+from ai_review.config import settings
 from ai_review.libs.llm.output_json_parser import LLMOutputJSONParser
+from ai_review.services.diff.one_c import (
+    filter_role_restriction_templates_from_unified_diff,
+    ignored_role_template_lines,
+    is_ignored_role_template_line,
+)
 from ai_review.services.git.types import GitServiceProtocol
 from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol
 from ai_review.services.review.internal.followup.schema import FollowupReply
-from ai_review.services.vcs.gitflic.markers import MarkerKind, ReviewMarker, decorate_ai_message, parse_marker
-from ai_review.services.vcs.types import ReviewThreadSchema, SupportsResolvableThreads, VCSClientProtocol
+from ai_review.services.vcs.gitflic.markers import (
+    MarkerKind,
+    ReviewMarker,
+    decorate_ai_message,
+    parse_marker,
+)
+from ai_review.services.vcs.types import (
+    ReviewThreadSchema,
+    SupportsResolvableThreads,
+    VCSClientProtocol,
+)
 
 
 class FollowupReviewRunner:
@@ -51,20 +66,44 @@ class FollowupReviewRunner:
         code_context = ""
         if self.git is not None and thread.file:
             review_info = await self.vcs.get_review_info()
-            diff = self.git.get_diff_for_file(
-                review_info.base_sha, review_info.head_sha, thread.file, unified=20,
+            current = (
+                self.git.get_file_at_commit(thread.file, review_info.head_sha) or ""
+            )
+            previous = (
+                self.git.get_file_at_commit(thread.file, review_info.base_sha) or ""
+            )
+            ignored_templates = set(
+                settings.review.ignore_1c_role_restriction_templates
+            )
+            diff = filter_role_restriction_templates_from_unified_diff(
+                self.git.get_diff_for_file(
+                    review_info.base_sha,
+                    review_info.head_sha,
+                    thread.file,
+                    unified=20,
+                ),
+                file=thread.file,
+                current=current,
+                previous=previous,
+                names=ignored_templates,
             )[:12000]
-            current = self.git.get_file_at_commit(thread.file, review_info.head_sha) or ""
             lines = current.splitlines()
+            ignored_lines = ignored_role_template_lines(
+                current, file=thread.file, names=ignored_templates
+            )
             line = max(thread.line or 1, 1)
             start = max(line - 21, 0)
             end = min(line + 20, len(lines))
             excerpt = "\n".join(
-                f"{number + 1}: {lines[number]}" for number in range(start, end)
+                f"{number + 1}: {lines[number]}"
+                for number in range(start, end)
+                if number + 1 not in ignored_lines
             )[:12000]
             code_context = f"\n\nАктуальный diff:\n{diff}\n\nАктуальный код:\n{excerpt}"
         return (
             "Проверь ответ разработчика на замечание по фактическому актуальному коду. "
+            "В BSL комментарий между строками многострочного строкового литерала допустим "
+            "и сам по себе литерал не разрывает. "
             "Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n"
             f"Обсуждение:\n{discussion}{code_context}"
         )
@@ -72,29 +111,96 @@ class FollowupReviewRunner:
     async def _process(self, thread: ReviewThreadSchema) -> None:
         pending = self._pending(thread)
         if not pending:
-            if self._last_followup_is_fixed(thread) and isinstance(self.vcs, SupportsResolvableThreads):
-                refreshed = next((item for item in await self.vcs.get_inline_threads() if item.id == thread.id), None)
-                if refreshed is not None and not self._pending(refreshed) and self._last_followup_is_fixed(refreshed):
+            if self._last_followup_is_fixed(thread) and isinstance(
+                self.vcs, SupportsResolvableThreads
+            ):
+                refreshed = next(
+                    (
+                        item
+                        for item in await self.vcs.get_inline_threads()
+                        if item.id == thread.id
+                    ),
+                    None,
+                )
+                if (
+                    refreshed is not None
+                    and not self._pending(refreshed)
+                    and self._last_followup_is_fixed(refreshed)
+                ):
                     await self.vcs.resolve_thread(thread.id)
             return
+        if self.git is not None and thread.file:
+            review_info = await self.vcs.get_review_info()
+            current = (
+                self.git.get_file_at_commit(thread.file, review_info.head_sha) or ""
+            )
+            if is_ignored_role_template_line(
+                current,
+                file=thread.file,
+                line=thread.line,
+                names=set(settings.review.ignore_1c_role_restriction_templates),
+            ):
+                if pending:
+                    marker = ReviewMarker(
+                        kind=MarkerKind.FOLLOWUP,
+                        head=self.head,
+                        covered=tuple(pending),
+                        verdict="fixed",
+                    )
+                    await self.vcs.create_inline_reply(
+                        thread.id,
+                        decorate_ai_message(
+                            "Замечание снято: типовой шаблон ограничения исключён из AI-ревью.",
+                            marker,
+                        ),
+                    )
+                    if isinstance(self.vcs, SupportsResolvableThreads):
+                        await self.vcs.resolve_thread(thread.id)
+                return
         prompt = await self._build_prompt(thread)
-        result = self.parser.parse_output(await self.review_llm_gateway.ask(prompt, "Ты AI-ревьювер."))
+        result = self.parser.parse_output(
+            await self.review_llm_gateway.ask(prompt, "Ты AI-ревьювер.")
+        )
         if not result:
             return
-        marker = ReviewMarker(kind=MarkerKind.FOLLOWUP, head=self.head, covered=tuple(pending), verdict=result.verdict)
+        marker = ReviewMarker(
+            kind=MarkerKind.FOLLOWUP,
+            head=self.head,
+            covered=tuple(pending),
+            verdict=result.verdict,
+        )
         message = decorate_ai_message(result.message, marker)
         await self.vcs.create_inline_reply(thread.id, message)
-        if result.verdict != "fixed" or not isinstance(self.vcs, SupportsResolvableThreads):
+        if result.verdict != "fixed" or not isinstance(
+            self.vcs, SupportsResolvableThreads
+        ):
             return
-        refreshed = next((item for item in await self.vcs.get_inline_threads() if item.id == thread.id), None)
-        if refreshed is not None and not self._pending(refreshed) and self._last_followup_is_fixed(refreshed):
+        refreshed = next(
+            (
+                item
+                for item in await self.vcs.get_inline_threads()
+                if item.id == thread.id
+            ),
+            None,
+        )
+        if (
+            refreshed is not None
+            and not self._pending(refreshed)
+            and self._last_followup_is_fixed(refreshed)
+        ):
             await self.vcs.resolve_thread(thread.id)
 
     async def run(self) -> None:
         if not self.author_id or len(self.head) != 40:
-            raise RuntimeError("AI_REVIEW_GITFLIC_USER_ID and 40-character AI_REVIEW_HEAD_SHA are required")
+            raise RuntimeError(
+                "AI_REVIEW_GITFLIC_USER_ID and 40-character AI_REVIEW_HEAD_SHA are required"
+            )
         for thread in await self.vcs.get_inline_threads():
             root = thread.comments[0] if thread.comments else None
-            marker = parse_marker(root.body, root.author.id, self.author_id) if root else None
+            marker = (
+                parse_marker(root.body, root.author.id, self.author_id)
+                if root
+                else None
+            )
             if marker and marker.kind is MarkerKind.FINDING:
                 await self._process(thread)

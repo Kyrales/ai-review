@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import asyncio
 
 import httpx
 import pytest
@@ -59,7 +60,9 @@ def test_create_discussion_allows_general_comment_without_position() -> None:
         {"newLine": None, "oldLine": None, "newPath": None, "oldPath": None},
     ],
 )
-def test_create_discussion_rejects_partial_position(position: dict[str, object]) -> None:
+def test_create_discussion_rejects_partial_position(
+    position: dict[str, object],
+) -> None:
     with pytest.raises(ValidationError):
         GitFlicCreateDiscussion(message="Please fix", **position)
 
@@ -67,13 +70,36 @@ def test_create_discussion_rejects_partial_position(position: dict[str, object])
 @pytest.mark.parametrize(
     ("schema", "payload"),
     [
-        ("GitFlicChanges", {"totalAddedLines": 0, "totalRemovedLines": 0, "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0}}),
-        ("GitFlicDiscussionsPage", {"_embedded": {}, "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0}}),
-        ("GitFlicChange", {"id": "c", "newPath": "new.py", "oldPath": "old.py", "changeType": "MODIFY"}),
+        (
+            "GitFlicChanges",
+            {
+                "totalAddedLines": 0,
+                "totalRemovedLines": 0,
+                "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0},
+            },
+        ),
+        (
+            "GitFlicDiscussionsPage",
+            {
+                "_embedded": {},
+                "page": {"size": 1, "totalElements": 0, "totalPages": 1, "number": 0},
+            },
+        ),
+        (
+            "GitFlicChange",
+            {
+                "id": "c",
+                "newPath": "new.py",
+                "oldPath": "old.py",
+                "changeType": "MODIFY",
+            },
+        ),
         ("GitFlicDiscussion", note("d1")),
     ],
 )
-def test_required_response_collections_fail_closed(schema: str, payload: dict[str, object]) -> None:
+def test_required_response_collections_fail_closed(
+    schema: str, payload: dict[str, object]
+) -> None:
     from ai_review.clients.gitflic import schema as gitflic_schema
 
     with pytest.raises(ValidationError):
@@ -87,14 +113,18 @@ async def test_client_sends_token_only_in_authorization_header() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal captured
         captured = request
-        return httpx.Response(200, request=request, json={
-            "id": "mr-1",
-            "localId": 41,
-            "title": "MR",
-            "sourceBranch": {"id": "feature", "title": "feature", "hash": "head"},
-            "targetBranch": {"id": "main", "title": "main", "hash": "base"},
-            "createdBy": AUTHOR,
-        })
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "mr-1",
+                "localId": 41,
+                "title": "MR",
+                "sourceBranch": {"id": "feature", "title": "feature", "hash": "head"},
+                "targetBranch": {"id": "main", "title": "main", "hash": "base"},
+                "createdBy": AUTHOR,
+            },
+        )
 
     client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
     try:
@@ -110,31 +140,142 @@ async def test_client_sends_token_only_in_authorization_header() -> None:
 
 
 @pytest.mark.asyncio
+async def test_client_retries_once_with_fallback_token_after_403() -> None:
+    tokens: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        tokens.append(request.headers["Authorization"])
+        if request.headers["Authorization"] == "token token":
+            return httpx.Response(403, request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "mr-1",
+                "localId": 41,
+                "title": "MR",
+                "sourceBranch": {"id": "feature", "title": "feature", "hash": "head"},
+                "targetBranch": {"id": "main", "title": "main", "hash": "base"},
+                "createdBy": AUTHOR,
+            },
+        )
+
+    client = GitFlicHTTPClient(
+        transport=httpx.MockTransport(handler), fallback_token="reserve"
+    )
+    try:
+        result = await client.get_mr("rt-vt", "sppr", 41)
+    finally:
+        await client.aclose()
+
+    assert result.localId == 41
+    assert tokens == ["token token", "token reserve"]
+
+
+@pytest.mark.asyncio
+async def test_client_does_not_use_fallback_after_server_error() -> None:
+    tokens: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        tokens.append(request.headers["Authorization"])
+        return httpx.Response(500, request=request)
+
+    client = GitFlicHTTPClient(
+        transport=httpx.MockTransport(handler), fallback_token="reserve"
+    )
+    try:
+        with pytest.raises(GitFlicHTTPClientError):
+            await client.get_mr("rt-vt", "sppr", 41)
+    finally:
+        await client.aclose()
+
+    assert tokens == ["token token"] * 3
+
+
+@pytest.mark.asyncio
+async def test_concurrent_403_requests_each_retry_with_fallback_token() -> None:
+    primary_started = 0
+    release_primary = asyncio.Event()
+    tokens: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal primary_started
+        token = request.headers["Authorization"]
+        tokens.append(token)
+        if token == "token token":
+            primary_started += 1
+            if primary_started == 2:
+                release_primary.set()
+            await release_primary.wait()
+            return httpx.Response(403, request=request)
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "mr-1",
+                "localId": 41,
+                "title": "MR",
+                "sourceBranch": {"id": "feature", "title": "feature", "hash": "head"},
+                "targetBranch": {"id": "main", "title": "main", "hash": "base"},
+                "createdBy": AUTHOR,
+            },
+        )
+
+    client = GitFlicHTTPClient(
+        transport=httpx.MockTransport(handler), fallback_token="reserve"
+    )
+    try:
+        results = await asyncio.gather(
+            client.get_mr("rt-vt", "sppr", 41),
+            client.get_mr("rt-vt", "sppr", 41),
+        )
+    finally:
+        await client.aclose()
+
+    assert [result.localId for result in results] == [41, 41]
+    assert tokens.count("token token") == 2
+    assert tokens.count("token reserve") == 2
+
+
+@pytest.mark.asyncio
 async def test_get_changes_reads_all_pages() -> None:
     requested_pages: list[int] = []
 
     async def handler(request: httpx.Request) -> httpx.Response:
         page = int(request.url.params["page"])
         requested_pages.append(page)
-        return httpx.Response(200, request=request, json={
-            "commitBlobs": [{
-                "id": f"blob-{page + 1}",
-                "newPath": f"new-{page + 1}.py",
-                "oldPath": f"old-{page + 1}.py",
-                "changeType": "MODIFY",
-                "headers": [],
-                "lines": [{
-                    "body": f"+value = {page + 1}",
-                    "addLineNumber": page + 1,
-                    "removeLineNumber": None,
-                    "op": "add",
-                    "type": "line",
-                }],
-            }],
-            "totalAddedLines": 2,
-            "totalRemovedLines": 0,
-            "page": {"size": 1, "totalElements": 2, "totalPages": 2, "number": page},
-        })
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "commitBlobs": [
+                    {
+                        "id": f"blob-{page + 1}",
+                        "newPath": f"new-{page + 1}.py",
+                        "oldPath": f"old-{page + 1}.py",
+                        "changeType": "MODIFY",
+                        "headers": [],
+                        "lines": [
+                            {
+                                "body": f"+value = {page + 1}",
+                                "addLineNumber": page + 1,
+                                "removeLineNumber": None,
+                                "op": "add",
+                                "type": "line",
+                            }
+                        ],
+                    }
+                ],
+                "totalAddedLines": 2,
+                "totalRemovedLines": 0,
+                "page": {
+                    "size": 1,
+                    "totalElements": 2,
+                    "totalPages": 2,
+                    "number": page,
+                },
+            },
+        )
 
     client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
     try:
@@ -158,10 +299,19 @@ async def test_get_discussions_reads_all_pages() -> None:
             "rootNote": note(f"d{page + 1}"),
             "replies": [note(f"r{page + 1}", discussionUuid=f"d{page + 1}")],
         }
-        return httpx.Response(200, request=request, json={
-            "_embedded": {"restDiscussionModelList": [item]},
-            "page": {"size": 1, "totalElements": 2, "totalPages": 2, "number": page},
-        })
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "_embedded": {"restDiscussionModelList": [item]},
+                "page": {
+                    "size": 1,
+                    "totalElements": 2,
+                    "totalPages": 2,
+                    "number": page,
+                },
+            },
+        )
 
     client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
     try:
@@ -177,9 +327,13 @@ async def test_get_discussions_reads_all_pages() -> None:
 @pytest.mark.asyncio
 async def test_get_discussions_accepts_empty_page_without_embedded() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, request=request, json={
-            "page": {"size": 100, "totalElements": 0, "totalPages": 0, "number": 0},
-        })
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "page": {"size": 100, "totalElements": 0, "totalPages": 0, "number": 0},
+            },
+        )
 
     client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
     try:
@@ -239,12 +393,18 @@ async def test_gitflic_get_retries_rate_limit() -> None:
         attempts += 1
         if attempts == 1:
             return httpx.Response(429, headers={"Retry-After": "0"}, request=request)
-        return httpx.Response(200, request=request, json={
-            "id": "mr-1", "localId": 41, "title": "MR",
-            "sourceBranch": {"id": "feature", "title": "feature", "hash": "head"},
-            "targetBranch": {"id": "main", "title": "main", "hash": "base"},
-            "createdBy": AUTHOR,
-        })
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "id": "mr-1",
+                "localId": 41,
+                "title": "MR",
+                "sourceBranch": {"id": "feature", "title": "feature", "hash": "head"},
+                "targetBranch": {"id": "main", "title": "main", "hash": "base"},
+                "createdBy": AUTHOR,
+            },
+        )
 
     client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
     try:
@@ -285,10 +445,14 @@ async def test_discussion_mutations_use_documented_endpoints_and_payloads() -> N
         requests.append(request)
         if "/delete/" in request.url.path:
             return httpx.Response(204, request=request)
-        return httpx.Response(200, request=request, json=note(
-            "created",
-            resolved="/resolve/" in request.url.path,
-        ))
+        return httpx.Response(
+            200,
+            request=request,
+            json=note(
+                "created",
+                resolved="/resolve/" in request.url.path,
+            ),
+        )
 
     client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
     discussion = GitFlicCreateDiscussion(
@@ -306,16 +470,28 @@ async def test_discussion_mutations_use_documented_endpoints_and_payloads() -> N
     finally:
         await client.aclose()
 
-    assert (created.uuid, replied.uuid, resolved.resolved, deleted) == ("created", "created", True, None)
+    assert (created.uuid, replied.uuid, resolved.resolved, deleted) == (
+        "created",
+        "created",
+        True,
+        None,
+    )
     assert [request.url.path for request in requests] == [
         "/project/rt-vt/sppr/merge-request/41/discussions/create",
         "/project/rt-vt/sppr/merge-request/41/discussions/reply",
         "/project/rt-vt/sppr/merge-request/41/discussions/resolve/discussion-1",
         "/project/rt-vt/sppr/merge-request/41/discussions/delete/discussion-1",
     ]
-    assert [request.method for request in requests] == ["POST", "POST", "POST", "DELETE"]
-    assert requests[0].content == (b'{"newLine":12,"oldLine":11,"newPath":"new.py",'
-                                   b'"oldPath":"old.py","message":"Please fix"}')
+    assert [request.method for request in requests] == [
+        "POST",
+        "POST",
+        "POST",
+        "DELETE",
+    ]
+    assert requests[0].content == (
+        b'{"newLine":12,"oldLine":11,"newPath":"new.py",'
+        b'"oldPath":"old.py","message":"Please fix"}'
+    )
     assert requests[1].content == b'{"discussionUuid":"discussion-1","message":"Fixed"}'
     assert datetime.fromisoformat("2026-09-06T10:00:00+00:00") == created.createdAt
 
@@ -350,9 +526,16 @@ async def test_inline_discussion_sends_positive_old_line_for_added_file() -> Non
     client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
     try:
         await client.create_discussion(
-            "rt-vt", "sppr", 41, GitFlicCreateDiscussion(
-                newLine=12, oldLine=12, newPath="new.py", oldPath="/dev/null", message="Inline"
-            )
+            "rt-vt",
+            "sppr",
+            41,
+            GitFlicCreateDiscussion(
+                newLine=12,
+                oldLine=12,
+                newPath="new.py",
+                oldPath="/dev/null",
+                message="Inline",
+            ),
         )
     finally:
         await client.aclose()

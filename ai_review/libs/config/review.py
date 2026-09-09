@@ -33,3 +33,4 @@ class ReviewConfig(BaseModel):
     max_context_comments: int | None = None
     max_inline_prompt_chars: int = Field(default=100_000, ge=1000)
     inline_comment_fallback: bool = True
+    ignore_1c_role_restriction_templates: list[str] = Field(default_factory=list)

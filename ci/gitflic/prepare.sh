@@ -17,7 +17,7 @@ runtime=/runtime
 artifacts=/artifacts
 repo_url=https://gitflic.ru/project/rt-vt/sppr.git
 api_url=https://api.gitflic.ru/project/rt-vt/sppr/merge-request/
-credential_canary=${AI_REVIEW_GITFLIC_TOKEN}
+credential_canary=$(printf '%s\n' "$AI_REVIEW_GITFLIC_TOKEN" "${AI_REVIEW_GITFLIC_TOKEN2:-}" | sed '/^$/d')
 . "$(dirname "$0")/runtime.sh"
 
 validate_https_url "$repo_url" 'https://gitflic.ru/project/rt-vt/sppr.git'
@@ -42,35 +42,54 @@ mapfile -t mr_state < <(python3 - <<'PY'
 import json, os, time, urllib.error, urllib.request
 
 url = f"https://api.gitflic.ru/project/rt-vt/sppr/merge-request/{os.environ['AI_REVIEW_MR_ID']}"
-request = urllib.request.Request(url, headers={"Authorization": "token " + os.environ["AI_REVIEW_GITFLIC_TOKEN"]})
+tokens = [("primary", os.environ["AI_REVIEW_GITFLIC_TOKEN"])]
+fallback = os.environ.get("AI_REVIEW_GITFLIC_TOKEN2", "")
+if fallback and fallback != tokens[0][1]:
+    tokens.append(("fallback", fallback))
+
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise urllib.error.HTTPError(req.full_url, code, "redirect refused", headers, fp)
 
 opener = urllib.request.build_opener(NoRedirect)
-for attempt in range(3):
-    try:
-        with opener.open(request, timeout=30) as response:
-            mr = json.load(response)
+for token_index, (selected_token, token) in enumerate(tokens):
+    request = urllib.request.Request(url, headers={"Authorization": "token " + token})
+    for attempt in range(3):
+        try:
+            with opener.open(request, timeout=30) as response:
+                mr = json.load(response)
+            break
+        except urllib.error.HTTPError as error:
+            if error.code in {401, 403} and token_index + 1 < len(tokens):
+                break
+            if error.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
+                raise
+            delay = error.headers.get("Retry-After", "")
+            time.sleep(float(delay) if delay.isdigit() else 0.5 * (2 ** attempt))
+        except urllib.error.URLError:
+            if attempt == 2:
+                raise
+            time.sleep(0.5 * (2 ** attempt))
+    else:
+        continue
+    if "mr" in locals():
         break
-    except urllib.error.HTTPError as error:
-        if error.code not in {408, 429, 500, 502, 503, 504} or attempt == 2:
-            raise
-        delay = error.headers.get("Retry-After", "")
-        time.sleep(float(delay) if delay.isdigit() else 0.5 * (2 ** attempt))
-    except urllib.error.URLError:
-        if attempt == 2:
-            raise
-        time.sleep(0.5 * (2 ** attempt))
+else:
+    raise SystemExit("GitFlic rejected all configured tokens")
 actual = (mr["status"]["id"], mr["sourceBranch"]["id"], mr["sourceBranch"]["hash"], mr["targetBranch"]["id"])
 expected = ("OPENED", os.environ["AI_REVIEW_SOURCE_BRANCH"], os.environ["AI_REVIEW_HEAD_SHA"], os.environ["AI_REVIEW_TARGET_BRANCH"])
 if actual != expected:
     raise SystemExit("MR state changed before checkout")
 print(mr["targetBranch"]["hash"])
+print(selected_token)
 PY
 )
-[[ ${#mr_state[@]} -eq 1 && ${mr_state[0]} =~ ^[0-9a-f]{40}$ ]] || exit 4
+[[ ${#mr_state[@]} -eq 2 && ${mr_state[0]} =~ ^[0-9a-f]{40}$ && ${mr_state[1]} =~ ^(primary|fallback)$ ]] || exit 4
 target_sha=${mr_state[0]}
+if [[ ${mr_state[1]} == fallback ]]; then
+  AI_REVIEW_GITFLIC_TOKEN=$AI_REVIEW_GITFLIC_TOKEN2
+  export AI_REVIEW_GITFLIC_TOKEN
+fi
 
 cache="$runtime/cache/sppr.git"
 exec 7>"$runtime/locks/cache.lock"
