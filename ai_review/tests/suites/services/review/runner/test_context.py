@@ -1,9 +1,12 @@
 import pytest
 
+from ai_review.config import settings
+from ai_review.libs.constants.vcs_provider import VCSProvider
 from ai_review.services.review.runner.context import ContextReviewRunner
 from ai_review.services.review.internal.inline.schema import InlineCommentSchema
 from ai_review.services.diff.schema import DiffFileSchema
 from ai_review.services.vcs.types import ReviewCommentSchema, ReviewInfoSchema
+from ai_review.services.vcs.gitflic.markers import MarkerKind, parse_marker
 from ai_review.tests.fixtures.services.cost import FakeCostService
 from ai_review.tests.fixtures.services.diff import FakeDiffService
 from ai_review.tests.fixtures.services.prompt import FakePromptService
@@ -42,6 +45,38 @@ async def test_run_happy_path(
 
     assert any(call[0] == "aggregate" for call in fake_cost_service.calls)
     assert not any(call[0] == "get_file_at_commit" for call in fake_git_service.calls)
+
+
+@pytest.mark.asyncio
+async def test_gitflic_context_finding_gets_trusted_runtime_marker(
+        monkeypatch,
+        context_review_runner: ContextReviewRunner,
+        fake_vcs_client: FakeVCSClient,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    monkeypatch.setattr(settings.vcs, "provider", VCSProvider.GITFLIC)
+    head = "a" * 40
+    fake_review_comment_gateway.responses["get_inline_comments"] = []
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=["file.py"], base_sha="b" * 40, head_sha=head
+    )
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(file="file.py", line=1, message="finding", severity="high")
+    ]
+
+    await context_review_runner.run()
+
+    comments = next(
+        call[1]["comments"] for call in fake_review_comment_gateway.calls
+        if call[0] == "process_inline_comments"
+    )
+    comment = comments.root[0]
+    marker = parse_marker(comment.message, "owner", "owner")
+    assert marker is not None
+    assert marker.kind is MarkerKind.FINDING
+    assert marker.head == head
+    assert comment.body_with_tag.count("Критичность:") == 1
 
 
 @pytest.mark.asyncio

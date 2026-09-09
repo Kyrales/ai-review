@@ -3,7 +3,9 @@ import re
 import pytest
 
 from ai_review.config import settings
+from ai_review.libs.config.review import ReviewSeverity
 from ai_review.services.policy.service import PolicyService
+from ai_review.services.review.internal.inline.schema import InlineCommentSchema
 
 
 @pytest.fixture(autouse=True)
@@ -13,6 +15,7 @@ def reset_settings(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setattr(settings.review, "allow_changes", [])
     monkeypatch.setattr(settings.review, "max_inline_comments", None)
     monkeypatch.setattr(settings.review, "max_context_comments", None)
+    monkeypatch.setattr(settings.review, "publish_severities", list(ReviewSeverity))
 
 
 # ---------- should_review_file ----------
@@ -104,6 +107,22 @@ def test_apply_for_inline_comments_when_fewer_than_limit(monkeypatch: pytest.Mon
     assert limited == comments
 
 
+def test_apply_for_inline_comments_filters_unpublished_severities(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        settings.review,
+        "publish_severities",
+        [ReviewSeverity.CRITICAL, ReviewSeverity.HIGH, ReviewSeverity.MEDIUM],
+    )
+    comments = [
+        InlineCommentSchema(file="a.py", line=1, message="critical", severity="critical"),
+        InlineCommentSchema(file="a.py", line=2, message="low", severity="low"),
+    ]
+
+    filtered = PolicyService.apply_for_inline_comments(comments)
+
+    assert [comment.message for comment in filtered] == ["critical"]
+
+
 # ---------- apply_for_context_comments ----------
 
 def test_apply_for_context_comments_with_limit(monkeypatch: pytest.MonkeyPatch):
@@ -118,3 +137,15 @@ def test_apply_for_context_comments_without_limit(monkeypatch: pytest.MonkeyPatc
     comments = ["c1", "c2", "c3"]
     limited = PolicyService.apply_for_context_comments(comments)
     assert limited == comments
+
+
+def test_apply_for_context_comments_filters_unpublished_severities(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(settings.review, "publish_severities", [ReviewSeverity.HIGH])
+    comments = [
+        InlineCommentSchema(file="a.py", line=1, message="high", severity="high"),
+        InlineCommentSchema(file="a.py", line=2, message="low", severity="low"),
+    ]
+
+    filtered = PolicyService.apply_for_context_comments(comments)
+
+    assert [comment.message for comment in filtered] == ["high"]

@@ -17,6 +17,13 @@ class ReviewMode(StrEnum):
     ADDED_AND_REMOVED_WITH_CONTEXT = "ADDED_AND_REMOVED_WITH_CONTEXT"
 
 
+class ReviewSeverity(StrEnum):
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class ReviewConfig(BaseModel):
     mode: ReviewMode = ReviewMode.FULL_FILE_DIFF
     dry_run: bool = False
@@ -31,6 +38,11 @@ class ReviewConfig(BaseModel):
     ignore_pure_renames: bool = True
     max_inline_comments: int | None = None
     max_context_comments: int | None = None
+    publish_severities: list[ReviewSeverity] = Field(default_factory=lambda: [
+        ReviewSeverity.CRITICAL,
+        ReviewSeverity.HIGH,
+        ReviewSeverity.MEDIUM,
+    ])
     max_inline_prompt_chars: int = Field(default=100_000, ge=1000)
     inline_comment_fallback: bool = True
     ignore_1c_role_restriction_templates: list[str] = Field(default_factory=list)

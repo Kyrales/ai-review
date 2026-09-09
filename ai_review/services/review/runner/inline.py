@@ -225,11 +225,10 @@ class InlineReviewRunner(ReviewRunnerProtocol):
 
         if settings.vcs.provider is VCSProvider.GITFLIC:
             for comment in comments.root:
-                comment.message = decorate_ai_message(
+                comment.replace_with_rendered_body(decorate_ai_message(
                     comment.body,
                     ReviewMarker(kind=MarkerKind.FINDING, head=review_info.head_sha),
-                )
-                comment.suggestion = None
+                ))
 
         return comments
 
