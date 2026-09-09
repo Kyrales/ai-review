@@ -18,6 +18,7 @@ from ai_review.tests.fixtures.services.vcs import FakeVCSClient
 async def test_run_happy_path(
         context_review_runner: ContextReviewRunner,
         fake_vcs_client: FakeVCSClient,
+        fake_git_service,
         fake_diff_service: FakeDiffService,
         fake_cost_service: FakeCostService,
         fake_prompt_service: FakePromptService,
@@ -40,6 +41,7 @@ async def test_run_happy_path(
     assert any(call[0] == "process_inline_comments" for call in fake_review_comment_gateway.calls)
 
     assert any(call[0] == "aggregate" for call in fake_cost_service.calls)
+    assert not any(call[0] == "get_file_at_commit" for call in fake_git_service.calls)
 
 
 @pytest.mark.asyncio
@@ -150,6 +152,56 @@ async def test_run_discards_false_bsl_multiline_comment_finding(
             line=3,
             message="Комментарий разрывает многострочный строковый литерал",
         )
+    ]
+
+    await context_review_runner.run()
+
+    assert not any(
+        call[0] == "process_inline_comments"
+        for call in fake_review_comment_gateway.calls
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("file", "source", "message"),
+    [
+        (
+            "src/Roles/Test/Test.mdo",
+            "<rights><object><right><value>true</value></right></object></rights>",
+            "Роль не содержит прав на объекты метаданных.",
+        ),
+        (
+            "src/Catalogs/Test/Forms/ItemForm/Form.form",
+            '<Form><items><id>1</id></items><attributes><id>1</id></attributes></Form>',
+            (
+                "Идентификатор элемента формы совпадает с идентификатором "
+                "атрибута, поэтому форма не загрузится."
+            ),
+        ),
+    ],
+)
+async def test_run_discards_known_false_1c_findings(
+        file: str,
+        source: str,
+        message: str,
+        context_review_runner: ContextReviewRunner,
+        fake_vcs_client: FakeVCSClient,
+        fake_git_service,
+        fake_diff_service: FakeDiffService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    fake_review_comment_gateway.responses["get_inline_comments"] = []
+    fake_vcs_client.responses["get_review_info"] = ReviewInfoSchema(
+        changed_files=[file], base_sha="A", head_sha="B"
+    )
+    fake_git_service.responses["get_file_at_commit"] = source
+    fake_diff_service.render_files = lambda **_: [
+        DiffFileSchema(file=file, diff="FAKE_DIFF", added_lines={1})
+    ]
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(file=file, line=1, message=message)
     ]
 
     await context_review_runner.run()

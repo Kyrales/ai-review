@@ -1,5 +1,6 @@
 import re
 from pathlib import PurePosixPath
+from xml.etree import ElementTree
 
 from ai_review.libs.config.review import ReviewMode
 from ai_review.services.diff.schema import DiffFileSchema
@@ -20,6 +21,68 @@ _FALSE_BSL_MULTILINE_COMMENT_CLAIM = re.compile(
     r")",
     re.IGNORECASE | re.DOTALL,
 )
+_ROLE_HAS_NO_RIGHTS_CLAIM = re.compile(
+    r"роль.{0,80}(?:не\s+содержит|не\s+имеет|нет).{0,40}прав",
+    re.IGNORECASE | re.DOTALL,
+)
+_FORM_CROSS_SCOPE_ID_CLAIM = re.compile(
+    r"идентификатор.{0,80}элемент\w*\s+форм\w*.{0,80}"
+    r"совпада\w*.{0,80}идентификатор\w*\s+атрибут\w*",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_false_1c_role_missing_rights_finding(
+    rights: str | None, *, file: str, message: str
+) -> bool:
+    """Reject a role-level claim of no rights when its Rights.rights grants any."""
+    path = PurePosixPath(file.replace("\\", "/"))
+    if (
+        not rights
+        or path.suffix.lower() != ".mdo"
+        or path.parent.parent.name != "Roles"
+        or path.stem != path.parent.name
+        or not _ROLE_HAS_NO_RIGHTS_CLAIM.search(message)
+    ):
+        return False
+    return bool(
+        re.search(
+            r"<object(?:\s|>).*?<right(?:\s|>).*?<value>\s*true\s*</value>",
+            rights,
+            re.IGNORECASE | re.DOTALL,
+        )
+    )
+
+
+def is_false_1c_form_cross_scope_id_finding(
+    source: str | None, *, file: str, message: str
+) -> bool:
+    """Reject claims that item and attribute IDs share one forbidden namespace."""
+    if (
+        not source
+        or PurePosixPath(file.replace("\\", "/")).name != "Form.form"
+        or not _FORM_CROSS_SCOPE_ID_CLAIM.search(message)
+    ):
+        return False
+    try:
+        root = ElementTree.fromstring(source)
+    except ElementTree.ParseError:
+        return False
+
+    def local_name(tag: str) -> str:
+        return tag.rsplit("}", 1)[-1]
+
+    ids: dict[str, set[str]] = {"items": set(), "attributes": set()}
+    for child in root:
+        kind = local_name(child.tag)
+        if kind not in ids:
+            continue
+        ids[kind].update(
+            (node.text or "").strip()
+            for node in child.iter()
+            if local_name(node.tag) == "id" and (node.text or "").strip()
+        )
+    return bool(ids["items"] & ids["attributes"])
 
 
 def is_false_bsl_multiline_comment_finding(

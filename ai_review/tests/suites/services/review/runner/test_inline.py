@@ -41,6 +41,7 @@ async def test_gitflic_finding_gets_trusted_runtime_marker(
     assert marker is not None
     assert marker.kind is MarkerKind.FINDING
     assert marker.head == head
+    assert not any(call[0] == "get_file_at_commit" for call in fake_git_service.calls)
 
 
 @pytest.mark.asyncio
@@ -297,6 +298,77 @@ async def test_process_file_discards_false_bsl_multiline_comment_finding(
     await inline_review_runner.process_file(
         file,
         ReviewInfoSchema(base_sha="a" * 40, head_sha="b" * 40),
+    )
+
+    assert not any(
+        call[0] == "process_inline_comments"
+        for call in fake_review_comment_gateway.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_file_discards_false_role_missing_rights_finding(
+        inline_review_runner: InlineReviewRunner,
+        fake_git_service: FakeGitService,
+        fake_diff_service: FakeDiffService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    file = "src/Roles/Test/Test.mdo"
+    fake_git_service.responses["get_diff_for_file"] = "FAKE_DIFF"
+    fake_git_service.responses["get_file_at_commit"] = (
+        "<rights><object><right><value>true</value></right></object></rights>"
+    )
+    fake_diff_service.render_file = lambda **_: DiffFileSchema(
+        file=file, diff="+1: role", added_lines={1}
+    )
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(
+            file=file,
+            line=1,
+            message="Роль не содержит прав на объекты метаданных.",
+        )
+    ]
+
+    await inline_review_runner.process_file(
+        file, ReviewInfoSchema(base_sha="a" * 40, head_sha="b" * 40)
+    )
+
+    assert not any(
+        call[0] == "process_inline_comments"
+        for call in fake_review_comment_gateway.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_process_file_discards_false_form_cross_scope_id_finding(
+        inline_review_runner: InlineReviewRunner,
+        fake_git_service: FakeGitService,
+        fake_diff_service: FakeDiffService,
+        fake_review_comment_gateway: FakeReviewCommentGateway,
+        fake_inline_comment_service: FakeInlineCommentService,
+):
+    file = "src/Catalogs/Test/Forms/ItemForm/Form.form"
+    fake_git_service.responses["get_diff_for_file"] = "FAKE_DIFF"
+    fake_git_service.responses["get_file_at_commit"] = (
+        '<Form><items><id>1</id></items><attributes><id>1</id></attributes></Form>'
+    )
+    fake_diff_service.render_file = lambda **_: DiffFileSchema(
+        file=file, diff="+1: form", added_lines={1}
+    )
+    fake_inline_comment_service.comments = [
+        InlineCommentSchema(
+            file=file,
+            line=1,
+            message=(
+                "Идентификатор элемента формы совпадает с идентификатором "
+                "атрибута, поэтому форма не загрузится."
+            ),
+        )
+    ]
+
+    await inline_review_runner.process_file(
+        file, ReviewInfoSchema(base_sha="a" * 40, head_sha="b" * 40)
     )
 
     assert not any(
