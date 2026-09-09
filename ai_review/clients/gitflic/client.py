@@ -23,21 +23,52 @@ class GitFlicHTTPClientError(HTTPClientError):
 
 
 class GitFlicHTTPClient(HTTPClient):
-    def __init__(self, transport: AsyncBaseTransport | None = None) -> None:
+    def __init__(
+        self,
+        transport: AsyncBaseTransport | None = None,
+        fallback_token: str | None = None,
+    ) -> None:
         retry_transport = RetryTransport(
             logger=get_logger("GITFLIC_HTTP_CLIENT"),
-            transport=transport or AsyncHTTPTransport(verify=settings.vcs.http_client.verify),
+            transport=transport
+            or AsyncHTTPTransport(verify=settings.vcs.http_client.verify),
             max_retries=3,
         )
         http = AsyncClient(
             base_url=settings.vcs.http_client.api_url_value.rstrip("/"),
-            headers={"Authorization": f"token {settings.vcs.http_client.api_token_value}"},
+            headers={
+                "Authorization": f"token {settings.vcs.http_client.api_token_value}"
+            },
             timeout=settings.vcs.http_client.timeout,
             verify=settings.vcs.http_client.verify,
             transport=retry_transport,
         )
         super().__init__(client=http)
         self.http = http
+        self._fallback_token = fallback_token or getattr(
+            settings.vcs.http_client, "api_token_fallback_value", None
+        )
+        if self._fallback_token == settings.vcs.http_client.api_token_value:
+            self._fallback_token = None
+
+    async def _request(self, method: str, url: str, **kwargs: object) -> Response:
+        response = await self.client.request(method, url, **kwargs)
+        fallback_header = (
+            f"token {self._fallback_token}" if self._fallback_token else None
+        )
+        if (
+            response.status_code not in (401, 403)
+            or not fallback_header
+            or response.request.headers.get("Authorization") == fallback_header
+        ):
+            return response
+        get_logger("GITFLIC_HTTP_CLIENT").warning(
+            "GitFlic rejected the primary token; retrying with the configured fallback token"
+        )
+        self.client.headers["Authorization"] = fallback_header
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers["Authorization"] = fallback_header
+        return await self.client.request(method, url, headers=headers, **kwargs)
 
     @staticmethod
     def _mr_path(owner: str, project: str, merge_request_id: int) -> str:
@@ -47,31 +78,40 @@ class GitFlicHTTPClient(HTTPClient):
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
     async def _get(self, url: str, *, params: dict[str, int] | None = None) -> Response:
-        return await self.client.get(url, params=params, follow_redirects=True)
+        return await self._request("GET", url, params=params, follow_redirects=True)
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
-    async def _post(self, url: str, *, json: dict[str, object] | None = None) -> Response:
-        return await self.client.request("POST", url, json=json, extensions=NO_RETRY)
+    async def _post(
+        self, url: str, *, json: dict[str, object] | None = None
+    ) -> Response:
+        return await self._request("POST", url, json=json, extensions=NO_RETRY)
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
     async def _delete(self, url: str) -> Response:
-        return await self.client.request("DELETE", url, extensions=NO_RETRY)
+        return await self._request("DELETE", url, extensions=NO_RETRY)
 
-    async def get_mr(self, owner: str, project: str, merge_request_id: int) -> GitFlicMergeRequest:
+    async def get_mr(
+        self, owner: str, project: str, merge_request_id: int
+    ) -> GitFlicMergeRequest:
         response = await self._get(self._mr_path(owner, project, merge_request_id))
         return GitFlicMergeRequest.model_validate_json(response.text)
 
-    async def get_changes(self, owner: str, project: str, merge_request_id: int) -> GitFlicChanges:
+    async def get_changes(
+        self, owner: str, project: str, merge_request_id: int
+    ) -> GitFlicChanges:
         path = f"{self._mr_path(owner, project, merge_request_id)}/changes"
         changes: GitFlicChanges | None = None
         commit_blobs = []
         page_number = 0
 
         while True:
-            response = await self._get(path, params={
-                "page": page_number,
-                "size": settings.vcs.pagination.per_page,
-            })
+            response = await self._get(
+                path,
+                params={
+                    "page": page_number,
+                    "size": settings.vcs.pagination.per_page,
+                },
+            )
             page = GitFlicChanges.model_validate_json(response.text)
             changes = page
             commit_blobs.extend(page.commitBlobs)
@@ -79,8 +119,13 @@ class GitFlicHTTPClient(HTTPClient):
             page_number += 1
             if page_number >= page.page.totalPages:
                 return changes.model_copy(update={"commitBlobs": commit_blobs})
-            if settings.vcs.pagination.max_pages and page_number >= settings.vcs.pagination.max_pages:
-                raise RuntimeError(f"Pagination exceeded max_pages={settings.vcs.pagination.max_pages}")
+            if (
+                settings.vcs.pagination.max_pages
+                and page_number >= settings.vcs.pagination.max_pages
+            ):
+                raise RuntimeError(
+                    f"Pagination exceeded max_pages={settings.vcs.pagination.max_pages}"
+                )
 
     async def get_discussions(
         self,
@@ -93,10 +138,13 @@ class GitFlicHTTPClient(HTTPClient):
         page_number = 0
 
         while True:
-            response = await self._get(path, params={
-                "page": page_number,
-                "size": settings.vcs.pagination.per_page,
-            })
+            response = await self._get(
+                path,
+                params={
+                    "page": page_number,
+                    "size": settings.vcs.pagination.per_page,
+                },
+            )
             page = GitFlicDiscussionsPage.model_validate_json(response.text)
             discussions.extend(
                 GitFlicDiscussion(
@@ -109,8 +157,13 @@ class GitFlicHTTPClient(HTTPClient):
             page_number += 1
             if page_number >= page.page.totalPages:
                 return discussions
-            if settings.vcs.pagination.max_pages and page_number >= settings.vcs.pagination.max_pages:
-                raise RuntimeError(f"Pagination exceeded max_pages={settings.vcs.pagination.max_pages}")
+            if (
+                settings.vcs.pagination.max_pages
+                and page_number >= settings.vcs.pagination.max_pages
+            ):
+                raise RuntimeError(
+                    f"Pagination exceeded max_pages={settings.vcs.pagination.max_pages}"
+                )
 
     async def create_discussion(
         self,

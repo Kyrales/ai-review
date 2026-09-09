@@ -22,13 +22,22 @@ def normalize_file_path(file_path: str) -> str:
 def find_diff_file(diff: Diff, file_path: str) -> DiffFile | None:
     target = normalize_file_path(file_path)
     for file in diff.files:
-        if normalize_file_path(file.new_name) == target or normalize_file_path(file.orig_name) == target:
+        if (
+            normalize_file_path(file.new_name) == target
+            or normalize_file_path(file.orig_name) == target
+        ):
             return file
 
     return None
 
 
-def read_snapshot(file_path: str, *, base_sha: str | None = None, head_sha: str | None = None) -> str | None:
+def read_snapshot(
+    file_path: str,
+    *,
+    base_sha: str | None = None,
+    head_sha: str | None = None,
+    workspace_fallback: bool = True,
+) -> str | None:
     git = GitService()
     try:
         if head_sha:
@@ -42,6 +51,9 @@ def read_snapshot(file_path: str, *, base_sha: str | None = None, head_sha: str 
                 return text
     except Exception as e:
         logger.warning(f"Git snapshot read failed for {file_path}: {e}")
+
+    if not workspace_fallback:
+        return None
 
     try:
         return Path(file_path).read_text(encoding="utf-8")

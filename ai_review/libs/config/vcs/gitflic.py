@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, SecretStr
 
 from ai_review.libs.config.http import HTTPClientWithTokenConfig
 
@@ -10,4 +10,12 @@ class GitFlicPipelineConfig(BaseModel):
 
 
 class GitFlicHTTPClientConfig(HTTPClientWithTokenConfig):
-    pass
+    api_token_fallback: SecretStr | None = None
+
+    @property
+    def api_token_fallback_value(self) -> str | None:
+        return (
+            self.api_token_fallback.get_secret_value()
+            if self.api_token_fallback
+            else None
+        )

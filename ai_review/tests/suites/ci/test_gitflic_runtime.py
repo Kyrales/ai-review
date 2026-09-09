@@ -45,6 +45,8 @@ def test_image_contains_self_contained_gitflic_prepare_runtime():
     assert 'mktemp "$runtime/work/' in script
     assert 'exec {work_lock_fd}>"$runtime/work/$work_name/.lock"' in script
     assert "COPY ci /opt/ai-review-ci" in dockerfile
+    assert "AI_REVIEW_GITFLIC_TOKEN2" in script
+    assert "selected_token" in script
 
 
 def test_sppr_runtime_config_uses_embedded_russian_prompts():

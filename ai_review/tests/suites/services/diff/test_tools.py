@@ -10,6 +10,7 @@ from ai_review.tests.fixtures.services.git import FakeGitService
 
 # ---------- normalize_file_path ----------
 
+
 @pytest.mark.parametrize(
     ("inp", "expected"),
     [
@@ -18,22 +19,18 @@ from ai_review.tests.fixtures.services.git import FakeGitService
         ("a/foo.py", "foo.py"),
         ("b\\foo.py", "foo.py"),
         ("plain.py", "plain.py"),
-
         # trailing whitespace from git diff headers
         ("a/foo.py\t", "foo.py"),
         ("b/foo.py\t", "foo.py"),
         ("a/foo.py \t", "foo.py"),
         ("a/foo.py\n", "foo.py"),
         ("a/foo.py\r\n", "foo.py"),
-
         # paths with spaces
         ("a/Citi_Sales/NAV/file name.txt\t", "Citi_Sales/NAV/file name.txt"),
         ("b/path with spaces/file.txt", "path with spaces/file.txt"),
-
         # windows-style paths
         ("a\\foo\\bar.py", "foo/bar.py"),
         ("b\\foo\\bar.py\t", "foo/bar.py"),
-
         # mixed / edge normalization
         ("./a/foo/bar.py", "foo/bar.py"),
         (".\\b\\foo\\bar.py\t", "foo/bar.py"),
@@ -45,6 +42,7 @@ def test_normalize_file_path_variants(inp: str, expected: str) -> None:
 
 # ---------- find_diff_file ----------
 
+
 def make_dummy_file(orig: str = "a/x.py", new: str = "b/x.py") -> DiffFile:
     hunk = DiffHunk(
         header="",
@@ -52,7 +50,9 @@ def make_dummy_file(orig: str = "a/x.py", new: str = "b/x.py") -> DiffFile:
         new_range=DiffRange(1, 0, []),
         lines=[],
     )
-    return DiffFile(header="hdr", mode=FileMode.MODIFIED, orig_name=orig, new_name=new, hunks=[hunk])
+    return DiffFile(
+        header="hdr", mode=FileMode.MODIFIED, orig_name=orig, new_name=new, hunks=[hunk]
+    )
 
 
 def test_find_diff_file_found_by_newname() -> None:
@@ -74,7 +74,10 @@ def test_find_diff_file_not_found_returns_none() -> None:
 
 # ---------- read_snapshot ----------
 
-def test_read_snapshot_prefers_git(monkeypatch: pytest.MonkeyPatch, fake_git_service: FakeGitService) -> None:
+
+def test_read_snapshot_prefers_git(
+    monkeypatch: pytest.MonkeyPatch, fake_git_service: FakeGitService
+) -> None:
     fake_git_service.responses["get_file_at_commit"] = "from git"
     monkeypatch.setattr(tools, "GitService", lambda: fake_git_service)
 
@@ -82,9 +85,9 @@ def test_read_snapshot_prefers_git(monkeypatch: pytest.MonkeyPatch, fake_git_ser
 
 
 def test_read_snapshot_fallback_to_filesystem(
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        fake_git_service: FakeGitService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_git_service: FakeGitService,
 ) -> None:
     file = tmp_path / "file.txt"
     file.write_text("hello")
@@ -97,11 +100,27 @@ def test_read_snapshot_fallback_to_filesystem(
 
 
 def test_read_snapshot_returns_none_if_missing(
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-        fake_git_service: FakeGitService,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_git_service: FakeGitService,
 ) -> None:
     fake_git_service.responses["get_file_at_commit"] = None
     monkeypatch.setattr(tools, "GitService", lambda: fake_git_service)
 
     assert tools.read_snapshot(str(tmp_path / "nope.txt")) is None
+
+
+def test_read_snapshot_can_disable_workspace_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_git_service: FakeGitService,
+    tmp_path: Path,
+) -> None:
+    file = tmp_path / "present.txt"
+    file.write_text("workspace", encoding="utf-8")
+    fake_git_service.responses["get_file_at_commit"] = None
+    monkeypatch.setattr(tools, "GitService", lambda: fake_git_service)
+
+    assert (
+        tools.read_snapshot(str(file), base_sha="BASE", workspace_fallback=False)
+        is None
+    )

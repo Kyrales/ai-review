@@ -7,6 +7,10 @@ review:
   context_lines: 12
   max_inline_comments: 20
   inline_comment_fallback: true
+  ignore_1c_role_restriction_templates:
+    - "ПоЗначениям"
+    - "ПоЗначениямРасширенный"
+    - "ПоЗначениямИНаборамРасширенный"
   allow_changes: ["src/cf/sppr/**", "src/cfe/YAXUNIT/**", "doc/**/*.md", "*.md"]
   ignore_changes: ["**/Help/**", "**/Pictures/**", "**/*.png", "**/*.jpg", "**/*.gif", "**/*.pdf", "**/*.epf", "**/*.erf", "build/**"]
 prompt:
