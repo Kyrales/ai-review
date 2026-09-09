@@ -14,14 +14,17 @@ review:
   allow_changes: ["src/cf/sppr/**", "src/cfe/YAXUNIT/**", "doc/**/*.md", "*.md"]
   ignore_changes: ["**/Help/**", "**/Pictures/**", "**/*.png", "**/*.jpg", "**/*.gif", "**/*.pdf", "**/*.epf", "**/*.erf", "build/**"]
 prompt:
-  inline_prompt_files: [/opt/ai-review-ci/sppr/prompts/inline.md]
-  context_prompt_files: [/opt/ai-review-ci/sppr/prompts/context.md]
-  summary_prompt_files: [/opt/ai-review-ci/sppr/prompts/summary.md]
-  inline_reply_prompt_files: [/opt/ai-review-ci/sppr/prompts/followup.md]
+  inline_prompt_files: [/opt/ai-review-ci/sppr/prompts/inline.md, /opt/ai-review-ci/sppr/prompts/project-rules.md]
+  context_prompt_files: [/opt/ai-review-ci/sppr/prompts/context.md, /opt/ai-review-ci/sppr/prompts/project-rules.md]
+  summary_prompt_files: [/opt/ai-review-ci/sppr/prompts/summary.md, /opt/ai-review-ci/sppr/prompts/project-rules.md]
+  inline_reply_prompt_files: [/opt/ai-review-ci/sppr/prompts/followup.md, /opt/ai-review-ci/sppr/prompts/project-rules.md]
   include_inline_system_prompts: true
   include_context_system_prompts: true
   include_summary_system_prompts: true
   include_inline_reply_system_prompts: true
+vcs:
+  pagination:
+    max_pages: 10
 artifacts:
   llm_dir: /artifacts/llm
   vcs_dir: /artifacts/vcs

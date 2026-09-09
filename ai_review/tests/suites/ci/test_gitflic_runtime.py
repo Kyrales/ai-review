@@ -52,11 +52,17 @@ def test_image_contains_self_contained_gitflic_prepare_runtime():
 def test_sppr_runtime_config_uses_embedded_russian_prompts():
     config = (ROOT / "ci/sppr/.ai-review-ones.yaml").read_text(encoding="utf-8")
     prompt = (ROOT / "ci/sppr/prompts/inline.md").read_text(encoding="utf-8")
+    project_rules = ROOT / "ci/sppr/prompts/project-rules.md"
 
     assert "/opt/ai-review-ci/sppr/prompts/inline.md" in config
     assert "Проведи ревью" in prompt
     assert "llm_enabled: false" in config
     assert "vcs_enabled: false" in config
+    assert "max_pages: 10" in config
+    assert config.count("/opt/ai-review-ci/sppr/prompts/project-rules.md") == 4
+    assert "СтандартныеПодсистемы.УправлениеДоступом" in project_rules.read_text(
+        encoding="utf-8"
+    )
 
 
 def test_publish_workflow_keylessly_signs_published_digest():
