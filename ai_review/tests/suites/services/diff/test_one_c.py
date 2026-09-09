@@ -3,6 +3,7 @@ from ai_review.services.diff.one_c import (
     filter_role_restriction_templates,
     filter_role_restriction_templates_from_unified_diff,
     ignored_role_template_lines,
+    is_false_bsl_multiline_comment_finding,
 )
 from ai_review.services.diff.schema import DiffFileSchema
 
@@ -173,3 +174,58 @@ standard
         source, file="Rights.rights", names={"ПоЗначениям"}
     ) == {1, 2, 3, 4}
     assert calls == 1
+
+
+def test_detects_false_finding_for_comment_between_bsl_string_continuations():
+    source = 'Text = "first\n|second\n// author note\n|third\n";'
+
+    assert is_false_bsl_multiline_comment_finding(
+        source,
+        file="CommonModules/Test/Module.bsl",
+        line=3,
+        message="Комментарий разрывает многострочный строковый литерал",
+    )
+    assert not is_false_bsl_multiline_comment_finding(
+        source,
+        file="CommonModules/Test/Module.bsl",
+        line=3,
+        message="В комментарии опубликован секрет",
+    )
+    assert not is_false_bsl_multiline_comment_finding(
+        source,
+        file="CommonModules/Test/Module.bsl",
+        line=3,
+        message=(
+            "Комментарий содержит секрет в продолжении многострочного литерала "
+            "и создаёт разрыв доступа"
+        ),
+    )
+    assert not is_false_bsl_multiline_comment_finding(
+        source,
+        file="CommonModules/Test/Module.bsl",
+        line=3,
+        message=(
+            "Комментарий разрывает маскировку секрета рядом с многострочным "
+            "строковым литералом"
+        ),
+    )
+    assert is_false_bsl_multiline_comment_finding(
+        source,
+        file="CommonModules/Test/Module.bsl",
+        line=3,
+        message=(
+            "Комментарий внутри многострочного строкового литерала разрывает "
+            "его продолжение"
+        ),
+    )
+
+
+def test_does_not_hide_finding_when_string_was_closed_before_comment():
+    source = 'Text = "first\n|second";\n// author note\n|third'
+
+    assert not is_false_bsl_multiline_comment_finding(
+        source,
+        file="CommonModules/Test/Module.bsl",
+        line=3,
+        message="Комментарий разрывает многострочный строковый литерал",
+    )

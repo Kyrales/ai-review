@@ -9,6 +9,59 @@ _BLOCK_END = re.compile(r"</restrictionTemplate\s*>")
 _NAME = re.compile(r"<name>\s*([^<]+?)\s*</name>")
 _RENDERED_LINE = re.compile(r"^([ +\-])(\d+):")
 _HUNK_HEADER = re.compile(r"^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@")
+_FALSE_BSL_MULTILINE_COMMENT_CLAIM = re.compile(
+    r"(?:"
+    r"комментари\w*.{0,80}(?:разрыва\w*|прерыва\w*)\s+"
+    r"(?:многостроч\w*\s+(?:строков\w*\s+)?литерал\w*|его\s+продолжени\w*)"
+    r"|"
+    r"комментари\w*.{0,40}(?:внутри|между).{0,40}"
+    r"многостроч\w*\s+(?:строков\w*\s+)?литерал\w*.{0,80}"
+    r"(?:разрыва\w*|прерыва\w*)\s+его\s+продолжени\w*"
+    r")",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_false_bsl_multiline_comment_finding(
+    source: str | None, *, file: str, line: int | None, message: str
+) -> bool:
+    """Recognize the known false claim that a BSL comment breaks a string."""
+    if not source or line is None or PurePosixPath(file).suffix.lower() != ".bsl":
+        return False
+    if not _FALSE_BSL_MULTILINE_COMMENT_CLAIM.search(message):
+        return False
+
+    lines = source.splitlines()
+    index = line - 1
+    if index < 0 or index >= len(lines) or not lines[index].lstrip().startswith("//"):
+        return False
+
+    in_string = False
+    for source_line in lines[:index]:
+        text = source_line.lstrip()
+        if text.startswith("//"):
+            continue
+        position = 0
+        while position < len(source_line):
+            if not in_string and source_line.startswith("//", position):
+                break
+            if source_line[position] != '"':
+                position += 1
+                continue
+            if in_string and position + 1 < len(source_line) and source_line[position + 1] == '"':
+                position += 2
+                continue
+            in_string = not in_string
+            position += 1
+
+    if not in_string:
+        return False
+
+    for source_line in lines[index + 1 :]:
+        text = source_line.strip()
+        if text and not text.startswith("//"):
+            return text.startswith("|")
+    return False
 
 
 def _ignored_lines(source: str | None, names: set[str]) -> set[int]:
