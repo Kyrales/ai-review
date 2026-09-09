@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# Shell runtime is checked out with LF via .gitattributes for Linux execution.
 
 validate_https_url() {
   local url=$1 expected=$2
