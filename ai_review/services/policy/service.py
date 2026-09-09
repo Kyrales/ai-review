@@ -1,6 +1,7 @@
 import fnmatch
 
 from ai_review.config import settings
+from ai_review.libs.config.review import ReviewSeverity
 from ai_review.libs.logger import get_logger
 from ai_review.services.policy.types import PolicyServiceProtocol
 
@@ -8,6 +9,19 @@ logger = get_logger("REVIEW_SERVICE")
 
 
 class PolicyService(PolicyServiceProtocol):
+    @staticmethod
+    def _filter_comments_by_severity(comments: list) -> list:
+        severities = set(settings.review.publish_severities)
+        filtered = [
+            comment for comment in comments
+            if getattr(comment, "severity", ReviewSeverity.MEDIUM) in severities
+        ]
+        if len(filtered) != len(comments):
+            logger.info(
+                f"Filtered {len(comments) - len(filtered)} comments by severity"
+            )
+        return filtered
+
     @classmethod
     def should_review_file(cls, file: str) -> bool:
         review = settings.review
@@ -61,15 +75,17 @@ class PolicyService(PolicyServiceProtocol):
 
     @classmethod
     def apply_for_inline_comments(cls, comments: list) -> list:
+        filtered = cls._filter_comments_by_severity(comments)
         limit = settings.review.max_inline_comments
-        if limit and (len(comments) > limit):
-            logger.info(f"Limiting inline comments to {limit} (from {len(comments)})")
-            return comments[:limit]
+        if limit and (len(filtered) > limit):
+            logger.info(f"Limiting inline comments to {limit} (from {len(filtered)})")
+            return filtered[:limit]
 
-        return comments
+        return filtered
 
     @classmethod
     def apply_for_context_comments(cls, comments: list) -> list:
+        comments = cls._filter_comments_by_severity(comments)
         limit = settings.review.max_context_comments
         if limit and (len(comments) > limit):
             logger.info(f"Limiting context comments to {limit} (from {len(comments)})")
