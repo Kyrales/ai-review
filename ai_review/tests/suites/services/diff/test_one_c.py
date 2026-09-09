@@ -4,6 +4,8 @@ from ai_review.services.diff.one_c import (
     filter_role_restriction_templates_from_unified_diff,
     ignored_role_template_lines,
     is_false_bsl_multiline_comment_finding,
+    is_false_1c_form_cross_scope_id_finding,
+    is_false_1c_role_missing_rights_finding,
 )
 from ai_review.services.diff.schema import DiffFileSchema
 
@@ -228,4 +230,47 @@ def test_does_not_hide_finding_when_string_was_closed_before_comment():
         file="CommonModules/Test/Module.bsl",
         line=3,
         message="Комментарий разрывает многострочный строковый литерал",
+    )
+
+
+def test_detects_false_role_missing_rights_finding_when_rights_exist():
+    rights = """<rights><object><name>Catalog.Test</name><right>
+<name>Read</name><value>true</value></right></object></rights>"""
+
+    assert is_false_1c_role_missing_rights_finding(
+        rights,
+        file="src/Roles/Test/Test.mdo",
+        message="Роль не содержит прав на объекты метаданных; добавьте необходимые права.",
+    )
+    assert not is_false_1c_role_missing_rights_finding(
+        "<rights/>",
+        file="src/Roles/Test/Test.mdo",
+        message="Роль не содержит прав на объекты метаданных.",
+    )
+    assert not is_false_1c_role_missing_rights_finding(
+        rights,
+        file="src/Roles/Test/Test.mdo",
+        message="Роль содержит избыточное право удаления.",
+    )
+
+
+def test_detects_false_form_id_collision_across_item_and_attribute_scopes():
+    form = """<form:Form xmlns:form="http://g5.1c.ru/v8/dt/form">
+<items><name>Table</name><id>2</id>
+  <items><name>Code</name><id>1</id></items>
+</items>
+<attributes><name>Object</name><id>1</id></attributes>
+</form:Form>"""
+    message = (
+        "Идентификатор элемента формы 1 совпадает с идентификатором атрибута, "
+        "из-за чего форма может не загрузиться."
+    )
+
+    assert is_false_1c_form_cross_scope_id_finding(
+        form, file="Catalogs/Test/Forms/ItemForm/Form.form", message=message
+    )
+    assert not is_false_1c_form_cross_scope_id_finding(
+        form,
+        file="Catalogs/Test/Forms/ItemForm/Form.form",
+        message="У двух элементов формы одинаковый идентификатор.",
     )

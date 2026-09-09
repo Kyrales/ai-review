@@ -1,13 +1,18 @@
 import asyncio
 import re
 from collections.abc import Callable
+from pathlib import PurePosixPath
 
 from ai_review.libs.asynchronous.gather import bounded_gather
 from ai_review.libs.logger import get_logger
 from ai_review.services.cost.types import CostServiceProtocol
 from ai_review.services.diff.types import DiffServiceProtocol
 from ai_review.services.diff.schema import DiffFileSchema
-from ai_review.services.diff.one_c import is_false_bsl_multiline_comment_finding
+from ai_review.services.diff.one_c import (
+    is_false_1c_form_cross_scope_id_finding,
+    is_false_1c_role_missing_rights_finding,
+    is_false_bsl_multiline_comment_finding,
+)
 from ai_review.services.git.types import GitServiceProtocol
 from ai_review.services.hook import hook
 from ai_review.services.policy.types import PolicyServiceProtocol
@@ -171,21 +176,45 @@ class InlineReviewRunner(ReviewRunnerProtocol):
             logger.warning(
                 f"Discarded {len(comments.root) - len(valid_comments)} inline comments outside added lines in {file}"
             )
-        if file.lower().endswith(".bsl") and valid_comments:
-            source = self.git.get_file_at_commit(file, review_info.head_sha)
+        if valid_comments:
+            path = PurePosixPath(file.replace("\\", "/"))
+            is_role = (
+                path.suffix.lower() == ".mdo"
+                and path.parent.parent.name == "Roles"
+                and path.stem == path.parent.name
+            )
+            needs_source = path.suffix.lower() == ".bsl" or path.name == "Form.form"
+            source = (
+                self.git.get_file_at_commit(file, review_info.head_sha)
+                if needs_source
+                else None
+            )
+            rights = None
+            if is_role:
+                rights = self.git.get_file_at_commit(
+                    str(path.parent / "Rights.rights"), review_info.head_sha
+                )
             checked_comments = [
                 comment
                 for comment in valid_comments
-                if not is_false_bsl_multiline_comment_finding(
-                    source,
-                    file=file,
-                    line=comment.line,
-                    message=comment.message,
+                if not (
+                    is_false_bsl_multiline_comment_finding(
+                        source,
+                        file=file,
+                        line=comment.line,
+                        message=comment.message,
+                    )
+                    or is_false_1c_role_missing_rights_finding(
+                        rights, file=file, message=comment.message
+                    )
+                    or is_false_1c_form_cross_scope_id_finding(
+                        source, file=file, message=comment.message
+                    )
                 )
             ]
             if len(checked_comments) != len(valid_comments):
                 logger.warning(
-                    f"Discarded {len(valid_comments) - len(checked_comments)} known false BSL multiline-string finding(s) in {file}"
+                    f"Discarded {len(valid_comments) - len(checked_comments)} known false 1C finding(s) in {file}"
                 )
             valid_comments = checked_comments
         comments.root = valid_comments
