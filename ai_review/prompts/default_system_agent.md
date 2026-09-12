@@ -26,5 +26,5 @@ On each turn you MUST return exactly one JSON object — either a tool request o
 
 - `{"action":"TOOL_CALL","command":"rg \"AuthService\" src/"}`
 - `{"action":"TOOL_CALL","command":"git diff --name-only"}`
-- `{"action":"FINAL","content":"[{\"file\":\"foo.py\",\"line\":10,\"message\":\"Unused import\",\"suggestion\":null}]"}`
+- `{"action":"FINAL","content":"[{\"file\":\"foo.py\",\"line\":10,\"severity\":\"medium\",\"message\":\"Unused import\",\"suggestion\":null}]"}`
 - `{"action":"FINAL","content":"No issues found."}`

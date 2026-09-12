@@ -41,6 +41,7 @@ async def test_gitflic_finding_gets_trusted_runtime_marker(
     assert marker is not None
     assert marker.kind is MarkerKind.FINDING
     assert marker.head == head
+    assert comments.root[0].body_with_tag.count("Критичность:") == 1
     assert not any(call[0] == "get_file_at_commit" for call in fake_git_service.calls)
 
 
