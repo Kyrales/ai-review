@@ -94,7 +94,7 @@ def build_executable(output_dir: Path, clean: bool = False) -> None:
     if platform.system() != "Windows":
         target_exe.chmod(0o755)
 
-    print(f"\n✓ Successfully built: {target_exe}")
+    print(f"\nSuccessfully built: {target_exe}")
     print(f"  Size: {target_exe.stat().st_size / 1024 / 1024:.2f} MB")
 
 
