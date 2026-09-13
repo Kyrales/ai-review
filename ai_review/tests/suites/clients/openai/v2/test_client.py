@@ -2,13 +2,16 @@ import json
 
 import pytest
 from httpx import AsyncClient, MockTransport, Request, Response
+from pydantic import HttpUrl, SecretStr
 
 from ai_review.clients.openai.v2.client import (
     get_openai_v2_http_client,
     OpenAIV2HTTPClient,
     OpenAIV2ProtocolError,
+    parse_responses_response,
 )
 from ai_review.clients.openai.v2.schema import OpenAIResponsesRequestSchema
+from ai_review.libs.config.llm.openai import OpenAIHTTPClientConfig
 
 
 @pytest.mark.usefixtures('openai_v2_http_client_config')
@@ -17,6 +20,25 @@ def test_get_openai_v2_http_client_builds_ok():
 
     assert isinstance(openai_http_client, OpenAIV2HTTPClient)
     assert isinstance(openai_http_client.client, AsyncClient)
+
+
+def test_get_openai_v2_http_client_accepts_explicit_config_and_timeout():
+    config = OpenAIHTTPClientConfig(
+        api_url=HttpUrl("https://codex.example/backend-api/codex"),
+        api_token=SecretStr("explicit-token"),
+        verify=False,
+        timeout=12,
+    )
+
+    openai_http_client = get_openai_v2_http_client(config=config, timeout=2700.0)
+
+    assert str(openai_http_client.client.base_url) == (
+        "https://codex.example/backend-api/codex/"
+    )
+    assert openai_http_client.client.headers["Authorization"] == (
+        "Bearer explicit-token"
+    )
+    assert openai_http_client.client.timeout.read == 2700.0
 
 
 def _response_payload(text: str = "Замечание") -> dict:
@@ -28,6 +50,183 @@ def _response_payload(text: str = "Замечание") -> dict:
             "content": [{"type": "output_text", "text": text}],
         }],
     }
+
+
+def test_parse_plain_json_response():
+    response = Response(200, json=_response_payload("JSON result"))
+
+    parsed = parse_responses_response(response)
+
+    assert parsed.first_text == "JSON result"
+
+
+@pytest.mark.parametrize("terminal_type", ["response.failed", "response.incomplete"])
+def test_parse_rejects_unsuccessful_sse_terminal_event(terminal_type: str):
+    payload = {"type": terminal_type, "response": {"status": "failed"}}
+    response = Response(
+        200,
+        text=f"event: {terminal_type}\ndata: {json.dumps(payload)}\n\n",
+        headers={"content-type": "text/event-stream"},
+    )
+
+    with pytest.raises(OpenAIV2ProtocolError, match=terminal_type):
+        parse_responses_response(response)
+
+
+def test_parse_rejects_sse_larger_than_20_mib():
+    response = Response(
+        200,
+        content=b":" + b"x" * (20 * 1024 * 1024),
+        headers={"content-type": "text/event-stream"},
+    )
+
+    with pytest.raises(OpenAIV2ProtocolError, match="20 MiB"):
+        parse_responses_response(response)
+
+
+def test_parse_rejects_more_than_100000_sse_events():
+    response = Response(
+        200,
+        text=("data: {}\n\n" * 100_001),
+        headers={"content-type": "text/event-stream"},
+    )
+
+    with pytest.raises(OpenAIV2ProtocolError, match="too many events"):
+        parse_responses_response(response)
+
+
+def test_parse_rejects_multiple_completed_events():
+    completed = {"type": "response.completed", "response": _response_payload()}
+    response = Response(
+        200,
+        text="".join(
+            f"event: response.completed\ndata: {json.dumps(completed)}\n\n"
+            for _ in range(2)
+        ),
+        headers={"content-type": "text/event-stream"},
+    )
+
+    with pytest.raises(OpenAIV2ProtocolError, match="multiple"):
+        parse_responses_response(response)
+
+
+def test_parse_rejects_stream_text_that_differs_from_completed_response():
+    completed = {
+        "type": "response.completed",
+        "response": _response_payload("completed text"),
+    }
+    body = (
+        "event: response.output_text.delta\n"
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"stream text\"}\n\n"
+        "event: response.output_text.done\n"
+        "data: {\"type\":\"response.output_text.done\",\"text\":\"stream text\"}\n\n"
+        "event: response.completed\n"
+        f"data: {json.dumps(completed)}\n\n"
+    )
+    response = Response(
+        200,
+        text=body,
+        headers={"content-type": "text/event-stream"},
+    )
+
+    with pytest.raises(OpenAIV2ProtocolError, match="completed response"):
+        parse_responses_response(response)
+
+
+def test_parse_compares_stream_with_raw_completed_text_before_stripping():
+    completed = {
+        "type": "response.completed",
+        "response": _response_payload("completed text\n"),
+    }
+    body = (
+        "event: response.output_text.delta\n"
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"completed text\\n\"}\n\n"
+        "event: response.output_text.done\n"
+        "data: {\"type\":\"response.output_text.done\",\"text\":\"completed text\\n\"}\n\n"
+        "event: response.completed\n"
+        f"data: {json.dumps(completed)}\n\n"
+    )
+    response = Response(
+        200,
+        text=body,
+        headers={"content-type": "text/event-stream"},
+    )
+
+    parsed = parse_responses_response(response)
+
+    assert parsed.first_text == "completed text"
+
+
+def test_parse_treats_empty_done_text_as_present():
+    completed = {
+        "type": "response.completed",
+        "response": _response_payload("completed text"),
+    }
+    body = (
+        "event: response.output_text.done\n"
+        "data: {\"type\":\"response.output_text.done\",\"text\":\"\"}\n\n"
+        "event: response.completed\n"
+        f"data: {json.dumps(completed)}\n\n"
+    )
+    response = Response(
+        200,
+        text=body,
+        headers={"content-type": "text/event-stream"},
+    )
+
+    with pytest.raises(OpenAIV2ProtocolError, match="completed response"):
+        parse_responses_response(response)
+
+
+def test_parse_treats_explicit_empty_completed_text_as_present():
+    completed = {
+        "type": "response.completed",
+        "response": _response_payload(""),
+    }
+    body = (
+        "event: response.output_text.delta\n"
+        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"stream text\"}\n\n"
+        "event: response.output_text.done\n"
+        "data: {\"type\":\"response.output_text.done\",\"text\":\"stream text\"}\n\n"
+        "event: response.completed\n"
+        f"data: {json.dumps(completed)}\n\n"
+    )
+    response = Response(
+        200,
+        text=body,
+        headers={"content-type": "text/event-stream"},
+    )
+
+    with pytest.raises(OpenAIV2ProtocolError, match="completed response"):
+        parse_responses_response(response)
+
+
+@pytest.mark.asyncio
+async def test_chat_api_posts_to_responses_below_the_configured_base_path():
+    captured = None
+
+    async def handler(request: Request) -> Response:
+        nonlocal captured
+        captured = request
+        return Response(200, json=_response_payload())
+
+    client = OpenAIV2HTTPClient(
+        AsyncClient(
+            base_url="https://codex.example/backend-api/codex/",
+            headers={"Authorization": "Bearer explicit-token"},
+            transport=MockTransport(handler),
+        )
+    )
+    request = OpenAIResponsesRequestSchema(model="test", input=[])
+
+    await client.chat_api(request)
+
+    assert captured is not None
+    assert str(captured.url) == (
+        "https://codex.example/backend-api/codex/responses"
+    )
+    assert captured.headers["Authorization"] == "Bearer explicit-token"
+    assert json.loads(captured.content) == request.model_dump(exclude_none=True)
 
 
 @pytest.mark.asyncio

@@ -10,6 +10,7 @@ from ai_review.services.vcs.types import (
     BranchRefSchema,
     ReviewCommentSchema,
     ReviewInfoSchema,
+    ReviewSummarySchema,
     UserSchema,
 )
 
@@ -63,6 +64,16 @@ def to_review_info(mr: GitFlicMergeRequest, changed_files: list[str]) -> ReviewI
         base_sha=os.environ["AI_REVIEW_BASE_SHA"],
         head_sha=os.environ["AI_REVIEW_HEAD_SHA"],
         changed_files=changed_files,
+    )
+
+
+def to_review_summary(mr: GitFlicMergeRequest) -> ReviewSummarySchema:
+    if mr.status is None:
+        raise ValueError("GitFlic merge request response omitted status")
+    return ReviewSummarySchema(
+        id=mr.localId,
+        source_branch=mr.sourceBranch.id,
+        state="open" if mr.status.id == "OPENED" else "closed",
     )
 
 

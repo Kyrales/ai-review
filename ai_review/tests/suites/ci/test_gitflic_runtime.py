@@ -1,10 +1,39 @@
 from pathlib import Path
+from importlib import resources
 import subprocess
 import textwrap
+
+from ai_review.libs.config.knowledge import KnowledgeConfig
 
 
 ROOT = Path(__file__).resolve().parents[4]
 RUNTIME = ROOT / "ci/gitflic/runtime.sh"
+
+
+def test_knowledge_runtime_is_packaged_and_disabled_by_default():
+    """Catches unavailable package prompts or knowledge enabled without opt-in."""
+    prompt_package = resources.files("ai_review.prompts")
+
+    for name in ("default_knowledge_extractor.md", "default_knowledge_compiler.md"):
+        assert prompt_package.joinpath(name).read_text(encoding="utf-8").strip()
+    assert KnowledgeConfig().enabled is False
+
+
+def test_portable_knowledge_modules_do_not_embed_one_c_project_identity():
+    """Catches copying one project's identity or source layout into reusable core."""
+    paths = [
+        ROOT / "ai_review/services/knowledge",
+        ROOT / "ai_review/prompts/default_knowledge_extractor.md",
+        ROOT / "ai_review/prompts/default_knowledge_compiler.md",
+        ROOT / "ai_review/cli/commands/sync_knowledge.py",
+    ]
+    forbidden = ("rt-vt", "sppr", "src/cf", "src/cfe")
+
+    for path in paths:
+        files = path.rglob("*.py") if path.is_dir() else (path,)
+        for file in files:
+            content = file.read_text(encoding="utf-8").casefold()
+            assert not any(value in content for value in forbidden), file
 
 
 def bash_path(path: Path | str) -> str:

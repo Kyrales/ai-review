@@ -9,12 +9,11 @@ from ai_review.clients.openai.v2.schema import (
     OpenAIResponsesResponseSchema
 )
 from ai_review.clients.openai.v2.types import OpenAIV2HTTPClientProtocol
-from ai_review.config import settings
 from ai_review.libs.http.client import HTTPClient
 from ai_review.libs.http.event_hooks.logger import LoggerEventHook
 from ai_review.libs.http.handlers import HTTPClientError, handle_http_error
 from ai_review.libs.http.transports.retry import RetryTransport
-from ai_review.libs.logger import get_logger
+from ai_review.libs.config.llm.openai import OpenAIHTTPClientConfig
 
 
 class OpenAIV2HTTPClientError(HTTPClientError):
@@ -39,11 +38,12 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
     event_name: str | None = None
     data_lines: list[str] = []
     text_deltas: list[str] = []
-    done_text: str | None = None
+    done_text = ""
+    done_seen = False
     events = 0
 
     def consume() -> None:
-        nonlocal completed, event_name, data_lines, events, done_text
+        nonlocal completed, event_name, data_lines, events, done_text, done_seen
         if not data_lines:
             event_name = None
             return
@@ -79,12 +79,13 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
             text = payload.get("text")
             if not isinstance(text, str):
                 raise OpenAIV2ProtocolError("response.output_text.done has no text")
-            if done_text is not None and done_text != text:
+            if done_seen and done_text != text:
                 raise OpenAIV2ProtocolError(
                     "SSE contains conflicting response.output_text.done events",
                     retryable=True,
                 )
             done_text = text
+            done_seen = True
         if payload_type == "response.completed":
             if completed is not None:
                 raise OpenAIV2ProtocolError(
@@ -113,12 +114,28 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
             retryable=True,
         )
     delta_text = "".join(text_deltas)
-    if done_text is not None and delta_text and done_text != delta_text:
+    if done_seen and text_deltas and done_text != delta_text:
         raise OpenAIV2ProtocolError("SSE final text does not match streamed deltas", retryable=True)
     try:
         parsed = OpenAIResponsesResponseSchema.model_validate(completed)
-        stream_text = done_text if done_text is not None else delta_text
-        if not parsed.first_text and stream_text:
+        completed_parts: list[str] = []
+        completed_text_seen = False
+        for block in parsed.output:
+            if block.type != "message" or not block.content:
+                continue
+            for content in block.content:
+                if content.type == "output_text" and content.text is not None:
+                    completed_text_seen = True
+                    completed_parts.append(content.text)
+        completed_text = "".join(completed_parts)
+        stream_seen = done_seen or bool(text_deltas)
+        stream_text = done_text if done_seen else delta_text
+        if stream_seen and completed_text_seen and completed_text != stream_text:
+            raise OpenAIV2ProtocolError(
+                "SSE text does not match completed response",
+                retryable=True,
+            )
+        if not completed_text_seen and stream_text:
             completed = {
                 **completed,
                 "output": [{
@@ -136,7 +153,7 @@ def parse_responses_response(response: Response) -> OpenAIResponsesResponseSchem
 class OpenAIV2HTTPClient(HTTPClient, OpenAIV2HTTPClientProtocol):
     @handle_http_error(client='OpenAIV2HTTPClient', exception=OpenAIV2HTTPClientError)
     async def chat_api(self, request: OpenAIResponsesRequestSchema) -> Response:
-        return await self.post("/responses", json=request.model_dump(exclude_none=True))
+        return await self.post("responses", json=request.model_dump(exclude_none=True))
 
     async def chat(self, request: OpenAIResponsesRequestSchema) -> OpenAIResponsesResponseSchema:
         for attempt in range(3):
@@ -150,22 +167,35 @@ class OpenAIV2HTTPClient(HTTPClient, OpenAIV2HTTPClientProtocol):
         raise AssertionError("unreachable")
 
 
-def get_openai_v2_http_client() -> OpenAIV2HTTPClient:
-    logger = get_logger("OPENAI_V2_HTTP_CLIENT")
+def get_openai_v2_http_client(
+    config: OpenAIHTTPClientConfig | None = None,
+    timeout: float | None = None,
+) -> OpenAIV2HTTPClient:
+    if config is None:
+        from ai_review.config import settings
+        from ai_review.libs.logger import get_logger
+
+        http_config = settings.llm.http_client
+        logger = get_logger("OPENAI_V2_HTTP_CLIENT")
+    else:
+        from loguru import logger as root_logger
+
+        http_config = config
+        logger = root_logger.bind(logger_name="OPENAI_V2_HTTP_CLIENT")
     logger_event_hook = LoggerEventHook(logger=logger)
     retry_transport = RetryTransport(
         logger=logger,
         transport=AsyncHTTPTransport(
-            proxy=settings.llm.http_client.proxy_url_value,
-            verify=settings.llm.http_client.verify
+            proxy=http_config.proxy_url_value,
+            verify=http_config.verify
         )
     )
 
     client = AsyncClient(
-        verify=settings.llm.http_client.verify,
-        timeout=settings.llm.http_client.timeout,
-        headers={"Authorization": f"Bearer {settings.llm.http_client.api_token_value}"},
-        base_url=settings.llm.http_client.api_url_value,
+        verify=http_config.verify,
+        timeout=timeout if timeout is not None else http_config.timeout,
+        headers={"Authorization": f"Bearer {http_config.api_token_value}"},
+        base_url=http_config.api_url_value,
         transport=retry_transport,
         event_hooks={
             'request': [logger_event_hook.request],

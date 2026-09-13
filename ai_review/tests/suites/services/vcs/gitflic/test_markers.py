@@ -33,6 +33,13 @@ def test_render_and_parse_followup_marker() -> None:
     assert parsed == original
 
 
+def test_gitflic_module_reexports_provider_neutral_v2_api() -> None:
+    from ai_review.services.vcs import markers as neutral
+
+    assert ReviewMarker is neutral.ReviewMarker
+    assert parse_marker is neutral.parse_marker
+
+
 def test_marker_rejects_unknown_duplicate_and_invalid_values() -> None:
     cases = [
         f"<!-- ai-review:v1;kind=finding;head={HEAD};unknown=x -->",

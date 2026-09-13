@@ -24,8 +24,39 @@ def note(uuid: str, **values: object) -> dict[str, object]:
     }
 
 
+def merge_request(local_id: int, status: str) -> dict[str, object]:
+    return {
+        "id": f"mr-{local_id}",
+        "localId": local_id,
+        "title": f"MR {local_id}",
+        "sourceBranch": {
+            "id": f"feature-{local_id}",
+            "title": f"feature-{local_id}",
+            "hash": f"head-{local_id}",
+        },
+        "targetBranch": {"id": "main", "title": "main", "hash": "base"},
+        "createdBy": AUTHOR,
+        "status": {"id": status},
+    }
+
+
 def test_provider_enum_contains_gitflic() -> None:
     assert VCSProvider("GITFLIC") is VCSProvider.GITFLIC
+
+
+@pytest.mark.asyncio
+async def test_get_authenticated_user_uses_documented_me_endpoint() -> None:
+    """Catches sync trusting a guessed identity instead of the token owner."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/user/me"
+        return httpx.Response(200, json=AUTHOR)
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        user = await client.get_authenticated_user()
+    finally:
+        await client.aclose()
+    assert (user.id, user.username) == ("user-1", "reviewer")
 
 
 def test_note_schema_rejects_wrong_field_types() -> None:
@@ -322,6 +353,47 @@ async def test_get_discussions_reads_all_pages() -> None:
     assert [item.uuid for item in result] == ["d1", "d2"]
     assert [item.replies[0].uuid for item in result] == ["r1", "r2"]
     assert requested_pages == [0, 1]
+
+
+@pytest.mark.asyncio
+async def test_list_open_merge_requests_reads_all_pages_and_filters_status() -> None:
+    requested: list[tuple[str, int]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        page = int(request.url.params["page"])
+        requested.append(
+            (request.url.raw_path.split(b"?", 1)[0].decode("ascii"), page)
+        )
+        items = (
+            [merge_request(41, "OPENED"), merge_request(42, "MERGED")]
+            if page == 0
+            else [merge_request(43, "OPENED")]
+        )
+        return httpx.Response(
+            200,
+            request=request,
+            json={
+                "_embedded": {"mergeRequestModelList": items},
+                "page": {
+                    "size": 2,
+                    "totalElements": 3,
+                    "totalPages": 2,
+                    "number": page,
+                },
+            },
+        )
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        result = await client.list_open_mrs("owner with space", "repo/name")
+    finally:
+        await client.aclose()
+
+    assert [item.localId for item in result] == [41, 43]
+    assert requested == [
+        ("/project/owner%20with%20space/repo%2Fname/merge-request/list", 0),
+        ("/project/owner%20with%20space/repo%2Fname/merge-request/list", 1),
+    ]
 
 
 @pytest.mark.asyncio
