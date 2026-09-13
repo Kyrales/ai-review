@@ -84,6 +84,11 @@ only runtime marker metadata published by the configured GitFlic user and
 rechecks a thread before resolving it. Keep source checkouts read-only and
 store YAML configuration and prompts in the protected control pipeline.
 
+Project teams can optionally turn trusted reviewer corrections into reusable
+review rules. See [Knowledge sync for 1C projects](./docs/knowledge-sync.md) for
+the GitFlic setup, path mapping and migration checklist. The feature is off by
+default.
+
 GitFlic may omit `lines` for large added files even though line discussions
 remain supported. The provider derives safe positions for such new files and
 falls back to a general comment containing `path:line` when a position cannot
@@ -326,6 +331,7 @@ See these folders for reference templates and full configuration options:
 - [./docs/hooks](./docs/hooks) — hook reference and lifecycle events
 - [./docs/configs](./docs/configs) — full configuration examples (`.yaml`, `.json`, `.env`)
 - [./docs/prompts](./docs/prompts) — prompt templates for Python/Go (light & strict modes)
+- [./docs/knowledge-sync.md](./docs/knowledge-sync.md) — portable knowledge sync setup for 1C projects
 - [./docs/troubleshooting.md](./docs/troubleshooting) — common environment and Git-related issues
 
 ---

@@ -1,4 +1,6 @@
+import logging
 import os
+import unicodedata
 from uuid import UUID
 
 from ai_review.config import settings
@@ -9,19 +11,34 @@ from ai_review.services.diff.one_c import (
     is_ignored_role_template_line,
 )
 from ai_review.services.git.types import GitServiceProtocol
+from ai_review.services.knowledge.block import render_knowledge_block
+from ai_review.services.knowledge.extractor import KnowledgeExtractor
+from ai_review.services.knowledge.schema import (
+    EligibleKnowledgeSource,
+    KnowledgeExtractionContext,
+)
 from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol
 from ai_review.services.review.internal.followup.schema import FollowupReply
+from ai_review.services.review.runner.followup_publication import (
+    FollowupPublicationStateMachine,
+    needs_resolve_restore,
+)
 from ai_review.services.vcs.gitflic.markers import (
     MarkerKind,
     ReviewMarker,
     decorate_ai_message,
     parse_marker,
+    publication_key,
 )
 from ai_review.services.vcs.types import (
+    ReviewCommentSchema,
     ReviewThreadSchema,
     SupportsResolvableThreads,
     VCSClientProtocol,
 )
+
+
+logger = logging.getLogger("ai_review.review.followup")
 
 
 class FollowupReviewRunner:
@@ -32,36 +49,93 @@ class FollowupReviewRunner:
         vcs: VCSClientProtocol,
         review_llm_gateway: ReviewLLMGatewayProtocol,
         git: GitServiceProtocol | None = None,
+        knowledge_extractor: KnowledgeExtractor | None = None,
     ):
         self.vcs = vcs
         self.review_llm_gateway = review_llm_gateway
         self.git = git
+        self.knowledge_extractor = knowledge_extractor
         self.parser = LLMOutputJSONParser(model=FollowupReply)
         self.author_id = os.environ.get("AI_REVIEW_GITFLIC_USER_ID", "")
         self.head = os.environ.get("AI_REVIEW_HEAD_SHA", "")
 
-    def _pending(self, thread: ReviewThreadSchema) -> list[UUID]:
-        covered: set[UUID] = set()
-        human: list[UUID] = []
-        for comment in thread.comments:
-            marker = parse_marker(comment.body, comment.author.id, self.author_id)
-            if marker and marker.kind is MarkerKind.FOLLOWUP:
-                covered.update(marker.covered)
-            elif comment.parent_id is not None:
-                try:
-                    human.append(UUID(str(comment.id)))
-                except ValueError:
-                    continue
-        return [item for item in human if item not in covered][:50]
+    @staticmethod
+    def _canonical_id(value: object) -> str:
+        normalized = unicodedata.normalize("NFC", str(value))
+        try:
+            return str(UUID(normalized))
+        except ValueError:
+            return normalized
 
-    def _last_followup_is_fixed(self, thread: ReviewThreadSchema) -> bool:
+    def _marker(self, comment: ReviewCommentSchema) -> ReviewMarker | None:
+        return parse_marker(comment.body, comment.author.id, self.author_id)
+
+    def _pending_comments(
+        self,
+        thread: ReviewThreadSchema,
+        related_threads: tuple[ReviewThreadSchema, ...] = (),
+    ) -> list[ReviewCommentSchema]:
+        covered: set[str] = set()
+        human: list[ReviewCommentSchema] = []
+        for comment in thread.comments:
+            marker = self._marker(comment)
+            if marker and marker.kind is MarkerKind.FOLLOWUP:
+                covered.update(self._canonical_id(item) for item in marker.covered)
+            elif comment.parent_id is not None:
+                human.append(comment)
+        origin = self._canonical_id(thread.id)
+        for related in related_threads:
+            for comment in related.comments:
+                marker = self._marker(comment)
+                if (
+                    marker is not None
+                    and marker.kind is MarkerKind.FOLLOWUP
+                    and marker.version == "v2"
+                    and marker.origin == origin
+                ):
+                    covered.update(self._canonical_id(item) for item in marker.covered)
+        return [
+            comment for comment in human
+            if self._canonical_id(comment.id) not in covered
+        ][:50]
+
+    def _pending(
+        self,
+        thread: ReviewThreadSchema,
+        related_threads: tuple[ReviewThreadSchema, ...] = (),
+    ) -> list[str]:
+        return [
+            self._canonical_id(comment.id)
+            for comment in self._pending_comments(thread, related_threads)
+        ]
+
+    def _continuations(
+        self,
+        thread: ReviewThreadSchema,
+        related_threads: tuple[ReviewThreadSchema, ...],
+    ) -> list[ReviewThreadSchema]:
+        origin = self._canonical_id(thread.id)
+        return [
+            related
+            for related in related_threads
+            if related.id != thread.id
+            and any(
+                (marker := self._marker(comment)) is not None
+                and marker.kind is MarkerKind.FOLLOWUP
+                and marker.version == "v2"
+                and marker.origin == origin
+                for comment in related.comments
+            )
+        ]
+
+    def _last_followup_is_terminal(self, thread: ReviewThreadSchema) -> bool:
         for comment in reversed(thread.comments):
             marker = parse_marker(comment.body, comment.author.id, self.author_id)
             if marker and marker.kind is MarkerKind.FOLLOWUP:
-                return marker.verdict == "fixed"
+                return marker.verdict in {"fixed", "withdrawn"}
         return False
 
-    async def _build_prompt(self, thread: ReviewThreadSchema) -> str:
+    async def _context(self, thread: ReviewThreadSchema) -> tuple[str, str]:
         discussion = "\n\n".join(comment.body[:4000] for comment in thread.comments)
         code_context = ""
         if self.git is not None and thread.file:
@@ -100,18 +174,80 @@ class FollowupReviewRunner:
                 if number + 1 not in ignored_lines
             )[:12000]
             code_context = f"\n\nАктуальный diff:\n{diff}\n\nАктуальный код:\n{excerpt}"
-        return (
+        prompt = (
             "Проверь ответ разработчика на замечание по фактическому актуальному коду. "
             "В BSL комментарий между строками многострочного строкового литерала допустим "
             "и сам по себе литерал не разрывает. "
-            "Верни JSON {verdict: fixed|open|clarify, message, suggestion}.\n"
+            "Верни JSON {verdict: fixed|open|clarify|withdrawn, message, suggestion}.\n"
             f"Обсуждение:\n{discussion}{code_context}"
         )
+        return prompt, code_context
 
-    async def _process(self, thread: ReviewThreadSchema) -> None:
-        pending = self._pending(thread)
+    async def _knowledge(
+        self,
+        thread: ReviewThreadSchema,
+        pending: list[ReviewCommentSchema],
+        code_context: str,
+    ) -> str:
+        if not settings.knowledge.enabled or self.knowledge_extractor is None:
+            return ""
+        provider = str(getattr(self.vcs, "provider", settings.vcs.provider)).lower()
+        trusted = {
+            username.casefold()
+            for username in getattr(settings.knowledge.trusted_reviewers, provider, ())
+        }
+        sources = tuple(
+            EligibleKnowledgeSource(
+                reply_id=self._canonical_id(comment.id),
+                username=comment.author.username,
+                text=comment.body[:12000],
+            )
+            for comment in pending
+            if comment.author.username.strip().casefold() in trusted
+        )
+        if not sources:
+            return ""
+        root = thread.comments[0]
+        current_code = code_context.partition("\n\nАктуальный код:\n")[2]
+        current_diff = code_context.partition("\n\nАктуальный diff:\n")[2].partition(
+            "\n\nАктуальный код:\n"
+        )[0]
+        try:
+            rules = await self.knowledge_extractor.extract(
+                KnowledgeExtractionContext(
+                    original_finding=root.body[:12000],
+                    current_code=current_code[:12000],
+                    current_diff=current_diff[:12000],
+                ),
+                sources,
+                settings.knowledge.max_rules_per_reply,
+            )
+            return "" if not rules else "\n\n" + render_knowledge_block(rules)
+        except Exception as error:
+            logger.warning(
+                "Knowledge extraction failed; publishing verdict without rules: %s",
+                error,
+            )
+            return ""
+
+    async def _process(
+        self,
+        thread: ReviewThreadSchema,
+        related_threads: tuple[ReviewThreadSchema, ...] = (),
+    ) -> None:
+        pending = self._pending(thread, related_threads)
         if not pending:
-            if self._last_followup_is_fixed(thread) and isinstance(
+            for continuation in self._continuations(thread, related_threads):
+                if continuation.resolved is not True and isinstance(
+                    self.vcs, SupportsResolvableThreads
+                ):
+                    await self.vcs.resolve_thread(continuation.id)
+            if needs_resolve_restore(thread, self.author_id) and isinstance(
+                self.vcs, SupportsResolvableThreads
+            ):
+                await self.vcs.resolve_thread(thread.id)
+                return
+            if self._last_followup_is_terminal(thread) and isinstance(
                 self.vcs, SupportsResolvableThreads
             ):
                 refreshed = next(
@@ -125,10 +261,11 @@ class FollowupReviewRunner:
                 if (
                     refreshed is not None
                     and not self._pending(refreshed)
-                    and self._last_followup_is_fixed(refreshed)
+                    and self._last_followup_is_terminal(refreshed)
                 ):
                     await self.vcs.resolve_thread(thread.id)
             return
+        fast_path_result: FollowupReply | None = None
         if self.git is not None and thread.file:
             review_info = await self.vcs.get_review_info()
             current = (
@@ -140,53 +277,43 @@ class FollowupReviewRunner:
                 line=thread.line,
                 names=set(settings.review.ignore_1c_role_restriction_templates),
             ):
-                if pending:
-                    marker = ReviewMarker(
-                        kind=MarkerKind.FOLLOWUP,
-                        head=self.head,
-                        covered=tuple(pending),
-                        verdict="fixed",
-                    )
-                    await self.vcs.create_inline_reply(
-                        thread.id,
-                        decorate_ai_message(
-                            "Замечание снято: типовой шаблон ограничения исключён из AI-ревью.",
-                            marker,
-                        ),
-                    )
-                    if isinstance(self.vcs, SupportsResolvableThreads):
-                        await self.vcs.resolve_thread(thread.id)
-                return
-        prompt = await self._build_prompt(thread)
-        result = self.parser.parse_output(
+                fast_path_result = FollowupReply(
+                    verdict="fixed",
+                    message="Замечание снято: типовой шаблон ограничения исключён из AI-ревью.",
+                )
+        prompt, code_context = await self._context(thread)
+        result = fast_path_result or self.parser.parse_output(
             await self.review_llm_gateway.ask(prompt, "Ты AI-ревьювер.")
         )
         if not result:
             return
+        pending_comments = self._pending_comments(thread, related_threads)
+        knowledge = await self._knowledge(thread, pending_comments, code_context)
+        provider = getattr(self.vcs, "provider", settings.vcs.provider)
+        project = getattr(self.vcs, "project_key", "current-project")
+        review_id = getattr(self.vcs, "merge_request_id", "current-review")
+        key = publication_key(provider, project, review_id, thread.id, self.head, pending)
         marker = ReviewMarker(
+            version="v2",
             kind=MarkerKind.FOLLOWUP,
             head=self.head,
-            covered=tuple(pending),
+            covered=tuple(sorted(pending, key=lambda value: value.encode("utf-8"))),
             verdict=result.verdict,
+            origin=self._canonical_id(thread.id),
+            publication=key,
         )
-        message = decorate_ai_message(result.message, marker)
-        await self.vcs.create_inline_reply(thread.id, message)
-        if result.verdict != "fixed" or not isinstance(
+        message = decorate_ai_message(result.message + knowledge, marker)
+        refreshed = await FollowupPublicationStateMachine(
+            self.vcs, self.author_id
+        ).publish(thread, message, key)
+        if result.verdict not in {"fixed", "withdrawn"} or not isinstance(
             self.vcs, SupportsResolvableThreads
         ):
             return
-        refreshed = next(
-            (
-                item
-                for item in await self.vcs.get_inline_threads()
-                if item.id == thread.id
-            ),
-            None,
-        )
         if (
-            refreshed is not None
-            and not self._pending(refreshed)
-            and self._last_followup_is_fixed(refreshed)
+            refreshed.thread.id == thread.id
+            and not refreshed.origin_was_closed
+            and not (set(self._pending(refreshed.thread)) - set(pending))
         ):
             await self.vcs.resolve_thread(thread.id)
 
@@ -195,7 +322,11 @@ class FollowupReviewRunner:
             raise RuntimeError(
                 "AI_REVIEW_GITFLIC_USER_ID and 40-character AI_REVIEW_HEAD_SHA are required"
             )
-        for thread in await self.vcs.get_inline_threads():
+        inline_threads = await self.vcs.get_inline_threads()
+        get_general = getattr(self.vcs, "get_general_threads", None)
+        general_threads = await get_general() if get_general is not None else []
+        related_threads = tuple([*inline_threads, *general_threads])
+        for thread in inline_threads:
             root = thread.comments[0] if thread.comments else None
             marker = (
                 parse_marker(root.body, root.author.id, self.author_id)
@@ -203,4 +334,4 @@ class FollowupReviewRunner:
                 else None
             )
             if marker and marker.kind is MarkerKind.FINDING:
-                await self._process(thread)
+                await self._process(thread, related_threads)

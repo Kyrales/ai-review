@@ -12,6 +12,7 @@ from ai_review.clients.gitflic.schema import (
     GitFlicDiscussion,
     GitFlicMergeRequest,
     GitFlicNote,
+    GitFlicStatus,
 )
 from ai_review.services.vcs.gitflic.client import GitFlicVCSClient
 from ai_review.services.vcs.types import ThreadKind
@@ -52,6 +53,7 @@ def gitflic_http(monkeypatch: pytest.MonkeyPatch):
                 createdBy=GitFlicAuthor(
                     id="author", username="dev", fullName="Developer"
                 ),
+                status=GitFlicStatus(id="OPENED"),
             )
         ),
         get_changes=AsyncMock(
@@ -130,6 +132,25 @@ async def test_client_maps_review_and_threads(gitflic_http):
     assert [(thread.kind, thread.id) for thread in general_threads] == [
         (ThreadKind.SUMMARY, "general")
     ]
+    assert inline_threads[0].resolved is None
+
+
+@pytest.mark.asyncio
+async def test_gitflic_declares_only_confirmed_closed_thread_capabilities(
+    gitflic_http,
+):
+    client = GitFlicVCSClient()
+
+    continuation = await client.create_continuation_thread(
+        "closed-thread", None, None, "publication"
+    )
+
+    assert client.can_reply_resolved is False
+    assert client.can_reopen is False
+    assert (continuation.id, continuation.resolved) == ("created", None)
+    request = gitflic_http.create_discussion.await_args.kwargs["request"]
+    assert request.message.startswith("Продолжение закрытой дискуссии `closed-thread`")
+    assert request.message.endswith("publication")
 
 
 @pytest.mark.asyncio

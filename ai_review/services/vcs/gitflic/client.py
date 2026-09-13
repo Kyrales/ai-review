@@ -7,6 +7,7 @@ from ai_review.clients.gitflic.schema import (
     GitFlicDiscussion,
 )
 from ai_review.config import settings
+from ai_review.libs.constants.vcs_provider import VCSProvider
 from ai_review.services.vcs.gitflic.adapter import (
     find_position,
     to_review_comment,
@@ -22,11 +23,16 @@ from ai_review.services.vcs.types import (
 
 
 class GitFlicVCSClient(VCSClientProtocol):
+    provider = VCSProvider.GITFLIC
+    can_reply_resolved = False
+    can_reopen = False
+
     def __init__(self) -> None:
         self.http_client = get_gitflic_http_client()
         self.owner = settings.vcs.pipeline.owner
         self.project = settings.vcs.pipeline.project
         self.merge_request_id = settings.vcs.pipeline.merge_request_id
+        self.project_key = f"{self.owner}/{self.project}"
 
         self._changes: GitFlicChanges | None = None
         self._changes_lock = asyncio.Lock()
@@ -126,26 +132,48 @@ class GitFlicVCSClient(VCSClientProtocol):
             self.owner, self.project, self.merge_request_id, str(thread_id)
         )
 
+    @classmethod
+    def _thread(cls, discussion: GitFlicDiscussion) -> ReviewThreadSchema:
+        inline = discussion.newPath is not None and discussion.newLine is not None
+        return ReviewThreadSchema(
+            id=discussion.uuid,
+            kind=ThreadKind.INLINE if inline else ThreadKind.SUMMARY,
+            file=discussion.newPath if inline else None,
+            line=discussion.newLine if inline else None,
+            comments=cls._comments(discussion),
+            resolved=discussion.resolved,
+        )
+
+    async def create_continuation_thread(
+        self,
+        origin_thread_id: str | int,
+        file: str | None,
+        line: int | None,
+        publication_message: str,
+    ) -> ReviewThreadSchema:
+        del file, line
+        message = (
+            f"Продолжение закрытой дискуссии `{origin_thread_id}`.\n\n"
+            f"{publication_message}"
+        )
+        created = await self.http_client.create_discussion(
+            self.owner,
+            self.project,
+            self.merge_request_id,
+            request=GitFlicCreateDiscussion(message=message),
+        )
+        return self._thread(GitFlicDiscussion(**created.model_dump(), replies=[]))
+
     async def get_inline_threads(self) -> list[ReviewThreadSchema]:
         return [
-            ReviewThreadSchema(
-                id=discussion.uuid,
-                kind=ThreadKind.INLINE,
-                file=discussion.newPath,
-                line=discussion.newLine,
-                comments=self._comments(discussion),
-            )
+            self._thread(discussion)
             for discussion in await self._discussions()
             if discussion.newPath is not None and discussion.newLine is not None
         ]
 
     async def get_general_threads(self) -> list[ReviewThreadSchema]:
         return [
-            ReviewThreadSchema(
-                id=discussion.uuid,
-                kind=ThreadKind.SUMMARY,
-                comments=self._comments(discussion),
-            )
+            self._thread(discussion)
             for discussion in await self._discussions()
             if discussion.newPath is None or discussion.newLine is None
         ]

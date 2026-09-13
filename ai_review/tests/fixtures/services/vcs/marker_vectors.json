@@ -1,0 +1,88 @@
+{
+  "markers": [
+    {
+      "name": "v1 finding remains readable",
+      "wire": "<!-- ai-review:v1;kind=finding;head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa -->",
+      "model": {
+        "version": "v1",
+        "kind": "finding",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    },
+    {
+      "name": "v1 followup supports withdrawn",
+      "wire": "<!-- ai-review:v1;kind=followup;head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;covered=12345678-1234-1234-1234-123456789abc;verdict=withdrawn -->",
+      "model": {
+        "version": "v1",
+        "kind": "followup",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "covered": ["12345678-1234-1234-1234-123456789abc"],
+        "verdict": "withdrawn"
+      }
+    },
+    {
+      "name": "v2 gitflic opaque IDs",
+      "wire": "<!-- ai-review:v2;kind=followup;head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;covered=NDI,cmVwbHkvb3BhcXVlOjc;verdict=fixed;origin=dGhyZWFkOtC-0YHQvdC-0LLQsC8x;publication=e479fccbad66ae603298b5d601a31dba57bb5b617c607f5c067c2768c15a02d6 -->",
+      "model": {
+        "version": "v2",
+        "kind": "followup",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "covered": ["42", "reply/opaque:7"],
+        "verdict": "fixed",
+        "origin": "thread:основа/1",
+        "publication": "e479fccbad66ae603298b5d601a31dba57bb5b617c607f5c067c2768c15a02d6"
+      }
+    },
+    {
+      "name": "v2 gitlab unicode IDs",
+      "wire": "<!-- ai-review:v2;kind=followup;head=0123456789abcdef0123456789abcdef01234567;covered=bm90ZTox,0L7RgtCy0LXRgjoy;verdict=clarify;origin=ZGlzY3Vzc2lvbi_DpA;publication=93f368cc2086e11867b2b920d96762bd688c0180a686de52f50f19fb071f2376 -->",
+      "model": {
+        "version": "v2",
+        "kind": "followup",
+        "head": "0123456789abcdef0123456789abcdef01234567",
+        "covered": ["note:1", "ответ:2"],
+        "verdict": "clarify",
+        "origin": "discussion/ä",
+        "publication": "93f368cc2086e11867b2b920d96762bd688c0180a686de52f50f19fb071f2376"
+      }
+    }
+  ],
+  "opaque_contract": [
+    {
+      "name": "opaque IDs are case-sensitive",
+      "wire": "<!-- ai-review:v2;kind=followup;head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;covered=QQ,YQ;verdict=open;origin=dGhyZWFk;publication=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+      "covered": ["A", "a"]
+    },
+    {
+      "name": "opaque IDs use UTF-8 byte ordering",
+      "wire": "<!-- ai-review:v2;kind=followup;head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;covered=7oCA,8JCAgA;verdict=open;origin=dGhyZWFk;publication=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb -->",
+      "covered": ["", "𐀀"]
+    },
+    {
+      "name": "opaque ID length counts Unicode code points",
+      "repeat": "😀",
+      "repeat_count": 129,
+      "code_points": 129
+    }
+  ],
+  "publications": [
+    {
+      "provider": "gitflic",
+      "project": "rt-vt/sppr",
+      "review_id": "60",
+      "origin_thread_id": "thread:основа/1",
+      "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "covered": ["reply/opaque:7", "42"],
+      "expected": "e479fccbad66ae603298b5d601a31dba57bb5b617c607f5c067c2768c15a02d6"
+    },
+    {
+      "provider": "gitlab",
+      "project": "группа/проект",
+      "review_id": "mr-β",
+      "origin_thread_id": "discussion/ä",
+      "head": "0123456789abcdef0123456789abcdef01234567",
+      "covered": ["ответ:2", "note:1"],
+      "expected": "93f368cc2086e11867b2b920d96762bd688c0180a686de52f50f19fb071f2376"
+    }
+  ]
+}

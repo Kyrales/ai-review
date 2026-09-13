@@ -1,7 +1,9 @@
 from enum import StrEnum
-from typing import Protocol, runtime_checkable
+from typing import Literal, Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
+
+from ai_review.libs.constants.vcs_provider import VCSProvider
 
 
 class ThreadKind(StrEnum):
@@ -52,6 +54,27 @@ class ReviewThreadSchema(BaseModel):
     file: str | None = None
     line: int | None = None
     comments: list[ReviewCommentSchema]
+    resolved: bool | None = None
+
+
+class ReviewSummarySchema(BaseModel):
+    id: str | int
+    source_branch: str
+    state: Literal["open", "closed"]
+
+
+@runtime_checkable
+class KnowledgeReviewSourceProtocol(Protocol):
+    provider: VCSProvider
+    project_key: str
+
+    async def list_open_reviews(self) -> list[ReviewSummarySchema]: ...
+
+    async def get_review(self, review_id: str | int) -> ReviewSummarySchema: ...
+
+    async def get_review_threads(
+        self, review_id: str | int
+    ) -> list[ReviewThreadSchema]: ...
 
 
 class VCSClientProtocol(Protocol):

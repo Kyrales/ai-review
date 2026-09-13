@@ -19,6 +19,10 @@ class GitFlicBranch(GitFlicModel):
     hash: str
 
 
+class GitFlicStatus(GitFlicModel):
+    id: str
+
+
 class GitFlicMergeRequest(GitFlicModel):
     id: str
     localId: int
@@ -27,6 +31,7 @@ class GitFlicMergeRequest(GitFlicModel):
     sourceBranch: GitFlicBranch
     targetBranch: GitFlicBranch
     createdBy: GitFlicAuthor
+    status: GitFlicStatus | None = None
 
 
 class GitFlicChangeLine(GitFlicModel):
@@ -67,7 +72,7 @@ class GitFlicNote(GitFlicModel):
     uuid: str
     discussionUuid: str | None = None
     rawMessage: str = ""
-    resolved: bool = False
+    resolved: bool | None = None
     newPath: str | None = None
     oldPath: str | None = None
     newLine: int | None = None
@@ -132,4 +137,26 @@ class GitFlicDiscussionsPage(GitFlicModel):
     def require_embedded_for_nonempty_page(self) -> "GitFlicDiscussionsPage":
         if self.page.totalElements and "embedded" not in self.model_fields_set:
             raise ValueError("GitFlic omitted _embedded for a nonempty discussions page")
+        return self
+
+
+class GitFlicMergeRequestsEmbedded(GitFlicModel):
+    mergeRequestModelList: list[GitFlicMergeRequest]
+
+
+def empty_merge_requests_embedded() -> GitFlicMergeRequestsEmbedded:
+    return GitFlicMergeRequestsEmbedded(mergeRequestModelList=[])
+
+
+class GitFlicMergeRequestsPage(GitFlicModel):
+    embedded: GitFlicMergeRequestsEmbedded = Field(
+        default_factory=empty_merge_requests_embedded,
+        alias="_embedded",
+    )
+    page: GitFlicPage
+
+    @model_validator(mode="after")
+    def require_embedded_for_nonempty_page(self) -> "GitFlicMergeRequestsPage":
+        if self.page.totalElements and "embedded" not in self.model_fields_set:
+            raise ValueError("GitFlic omitted _embedded for a nonempty merge request page")
         return self

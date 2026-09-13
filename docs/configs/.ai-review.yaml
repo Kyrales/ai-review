@@ -594,6 +594,18 @@ review:
   # Default: true
   inline_comment_fallback: true
 
+knowledge:
+  # Disabled by default. Enable only after configuring trusted human reviewers.
+  enabled: false
+  trusted_reviewers:
+    gitflic: []  # GitFlic usernames allowed to contribute reusable rules
+    gitlab: []   # Reserved for a future GitLab knowledge source adapter
+  # Maximum rules extracted from each individual reviewer reply (1..3).
+  max_rules_per_reply: 3
+  sync:
+    # Safe path relative to this YAML file; it must stay inside the repository.
+    rules_file: ai-review/prompts/project-rules.md
+
 logger:
   # Logging level for the application.
   # Options: NOTSET | DEBUG | INFO | WARNING | ERROR | CRITICAL

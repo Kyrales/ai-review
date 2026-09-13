@@ -1,10 +1,25 @@
 import pytest
+from pydantic import ValidationError
 
-from ai_review.clients.gitflic.schema import GitFlicAuthor, GitFlicBranch, GitFlicChange, GitFlicChangeLine, GitFlicMergeRequest
-from ai_review.services.vcs.gitflic.adapter import find_position, to_review_info
+from ai_review.clients.gitflic.schema import (
+    GitFlicAuthor,
+    GitFlicBranch,
+    GitFlicChange,
+    GitFlicChangeLine,
+    GitFlicMergeRequest,
+    GitFlicStatus,
+)
+from ai_review.services.vcs.gitflic.adapter import (
+    find_position,
+    to_review_info,
+    to_review_summary,
+)
+from ai_review.services.vcs.types import ReviewSummarySchema
 
 
-def make_change(*, new_path: str = "src/cf/sppr/a.bsl", old_path: str | None = None) -> GitFlicChange:
+def make_change(
+    *, new_path: str = "src/cf/sppr/a.bsl", old_path: str | None = None
+) -> GitFlicChange:
     return GitFlicChange(
         id="change-1",
         newPath=new_path,
@@ -160,3 +175,34 @@ def test_review_info_uses_trusted_environment_shas(monkeypatch: pytest.MonkeyPat
     assert result.base_sha == "base-from-control"
     assert result.head_sha == "head-from-control"
     assert result.changed_files == ["src/cf/sppr/a.bsl"]
+
+
+@pytest.mark.parametrize(
+    ("provider_status", "expected_state"),
+    [("OPENED", "open"), ("CLOSED", "closed"), ("MERGED", "closed")],
+)
+def test_review_summary_maps_provider_state(
+    provider_status: str, expected_state: str
+) -> None:
+    mr = GitFlicMergeRequest(
+        id="mr-uuid",
+        localId=41,
+        title="MR",
+        sourceBranch=GitFlicBranch(id="feature", title="feature", hash="head"),
+        targetBranch=GitFlicBranch(id="main", title="main", hash="base"),
+        createdBy=GitFlicAuthor(id="author"),
+        status=GitFlicStatus(id=provider_status),
+    )
+
+    result = to_review_summary(mr)
+
+    assert (result.id, result.source_branch, result.state) == (
+        41,
+        "feature",
+        expected_state,
+    )
+
+
+def test_review_summary_rejects_noncanonical_state() -> None:
+    with pytest.raises(ValidationError):
+        ReviewSummarySchema(id=41, source_branch="feature", state="pending")

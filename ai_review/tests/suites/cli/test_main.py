@@ -81,10 +81,11 @@ def test_show_config_outputs_json(monkeypatch: pytest.MonkeyPatch):
     """
     Validate that the 'show-config' command prints settings as JSON.
     """
-    monkeypatch.setattr(
-        "ai_review.cli.main.settings.model_dump_json",
-        lambda **_: '{"debug": true}'
-    )
+    class FakeSettings:
+        def model_dump_json(self, **_: object) -> str:
+            return '{"debug": true}'
+
+    monkeypatch.setattr("ai_review.config.load_settings", lambda: FakeSettings())
 
     result = runner.invoke(app, ["show-config"])
     assert result.exit_code == 0
