@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import os
-import json
-import tomllib
 from pathlib import Path
 from typing import Literal
 
@@ -36,32 +34,6 @@ class SyncLLMSettings(BaseModel):
     ]
     timeout: float = 2700.0
 
-    @staticmethod
-    def _codex_defaults() -> dict[str, object]:
-        codex_home = Path(os.environ.get("CODEX_HOME", Path.home() / ".codex"))
-        try:
-            config = tomllib.loads((codex_home / "config.toml").read_text(encoding="utf-8"))
-        except (OSError, ValueError, tomllib.TOMLDecodeError):
-            return {}
-        provider_name = config.get("model_provider")
-        provider = (config.get("model_providers") or {}).get(provider_name, {})
-        token = None
-        env_key = provider.get("env_key")
-        if isinstance(env_key, str):
-            token = os.environ.get(env_key)
-        if not token and provider.get("requires_openai_auth") is True:
-            try:
-                auth = json.loads((codex_home / "auth.json").read_text(encoding="utf-8"))
-                token = auth.get("OPENAI_API_KEY")
-            except (OSError, ValueError, json.JSONDecodeError):
-                pass
-        return {
-            "api_url": provider.get("base_url"),
-            "api_token": token,
-            "model": config.get("model"),
-            "reasoning_effort": config.get("model_reasoning_effort"),
-        }
-
     @classmethod
     def from_environment(cls, repository_root: Path) -> "SyncLLMSettings":
         names = {
@@ -71,14 +43,11 @@ class SyncLLMSettings(BaseModel):
             "reasoning_effort": "AI_REVIEW_REASONING_EFFORT",
         }
         dotenv = dotenv_values(repository_root / ".env")
-        codex = cls._codex_defaults()
         values = {
             field: (
                 os.environ[environment_name]
                 if environment_name in os.environ
-                else dotenv[environment_name]
-                if environment_name in dotenv
-                else codex.get(field)
+                else dotenv.get(environment_name)
             )
             for field, environment_name in names.items()
         }
