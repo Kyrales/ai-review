@@ -1,4 +1,5 @@
 import os
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -108,6 +109,63 @@ def test_sync_settings_reads_repository_dotenv_when_environment_is_absent(
     assert settings.api_token.get_secret_value() == "dotenv-token"
     assert settings.model == "dotenv-model"
     assert settings.reasoning_effort == "xhigh"
+
+
+def test_sync_settings_falls_back_to_codex_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _clear_sync_environment(monkeypatch)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        'model = "gpt-5.6-sol"\n'
+        'model_provider = "codex-lb"\n'
+        'model_reasoning_effort = "high"\n'
+        '[model_providers.codex-lb]\n'
+        'base_url = "https://codex.example/backend-api/codex"\n'
+        'env_key = "CODEX_LB_API_KEY"\n'
+        'requires_openai_auth = true\n',
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.setenv("CODEX_LB_API_KEY", "provider-token")
+
+    settings = SyncLLMSettings.from_environment(tmp_path)
+
+    assert str(settings.api_url).rstrip("/") == "https://codex.example/backend-api/codex"
+    assert settings.api_token.get_secret_value() == "provider-token"
+    assert settings.model == "gpt-5.6-sol"
+    assert settings.reasoning_effort == "high"
+
+
+def test_sync_settings_falls_back_to_codex_auth_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _clear_sync_environment(monkeypatch)
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        'model = "gpt-5.6-sol"\n'
+        'model_provider = "codex-lb"\n'
+        'model_reasoning_effort = "medium"\n'
+        '[model_providers.codex-lb]\n'
+        'base_url = "https://codex.example/backend-api/codex"\n'
+        'env_key = "CODEX_LB_API_KEY"\n'
+        'requires_openai_auth = true\n',
+        encoding="utf-8",
+    )
+    (codex_home / "auth.json").write_text(
+        json.dumps({"OPENAI_API_KEY": "auth-file-token"}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+    monkeypatch.delenv("CODEX_LB_API_KEY", raising=False)
+
+    settings = SyncLLMSettings.from_environment(tmp_path)
+
+    assert settings.api_token.get_secret_value() == "auth-file-token"
 
 
 def test_sync_settings_empty_environment_value_does_not_fall_back_to_dotenv(
