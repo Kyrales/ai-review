@@ -9,19 +9,17 @@ import sys
 from pathlib import Path
 
 
-def get_platform_suffix() -> str:
-    """Get platform-specific suffix for the executable."""
+def get_release_layout() -> tuple[str, str]:
+    """Get the release directory and executable name for the current platform."""
     system = platform.system().lower()
-    machine = platform.machine().lower()
 
     if system == "windows":
-        return f"windows-{machine}"
-    elif system == "linux":
-        return f"linux-{machine}"
-    elif system == "darwin":
-        return f"macos-{machine}"
-    else:
-        return f"{system}-{machine}"
+        return "win-x64", "ai-review.exe"
+    if system == "linux":
+        return "linux-x64", "ai-review"
+    if system == "darwin":
+        return "macos-x64", "ai-review"
+    raise RuntimeError(f"Unsupported platform: {platform.system()}")
 
 
 def build_executable(output_dir: Path, clean: bool = False) -> None:
@@ -49,8 +47,8 @@ def build_executable(output_dir: Path, clean: bool = False) -> None:
     if not entry_point.exists():
         raise FileNotFoundError(f"Entry point not found: {entry_point}")
 
-    platform_suffix = get_platform_suffix()
-    exe_name = f"ai-review-{platform_suffix}"
+    release_dir_name, executable_name = get_release_layout()
+    exe_name = f"ai-review-{release_dir_name}"
 
     cmd = [
         sys.executable,
@@ -77,12 +75,12 @@ def build_executable(output_dir: Path, clean: bool = False) -> None:
 
     subprocess.check_call(cmd, cwd=project_root)
 
-    # Move to artifacts directory
-    output_dir.mkdir(parents=True, exist_ok=True)
+    # Move to platform-specific artifacts directory
+    platform_output_dir = output_dir / release_dir_name
+    platform_output_dir.mkdir(parents=True, exist_ok=True)
 
-    exe_extension = ".exe" if platform.system() == "Windows" else ""
-    built_exe = dist_dir / f"{exe_name}{exe_extension}"
-    target_exe = output_dir / f"{exe_name}{exe_extension}"
+    built_exe = dist_dir / f"{exe_name}{'.exe' if platform.system() == 'Windows' else ''}"
+    target_exe = platform_output_dir / executable_name
 
     if not built_exe.exists():
         raise FileNotFoundError(f"Built executable not found: {built_exe}")

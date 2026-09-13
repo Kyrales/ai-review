@@ -18,10 +18,13 @@ python build_release.py --output-dir ./custom/path
 
 ## Output
 
-Executables are placed in `artifacts/releases/` by default:
-- Windows: `ai-review-windows-amd64.exe`
-- Linux: `ai-review-linux-x86_64`
-- macOS: `ai-review-macos-arm64` or `ai-review-macos-x86_64`
+Executables are placed in platform-specific subdirectories under `artifacts/releases/`:
+- Windows: `artifacts/releases/win-x64/ai-review.exe`
+- Linux: `artifacts/releases/linux-x64/ai-review`
+- macOS: `artifacts/releases/macos-x64/ai-review`
+
+The script builds only for the operating system on which it runs. Linux and macOS
+must be built on those operating systems or by their respective CI runners.
 
 ## Environment Variable Setup
 
@@ -31,11 +34,11 @@ Add to your PowerShell profile or set permanently:
 
 ```powershell
 # Temporary (current session)
-$env:PATH = "F:\1C\Projects\RT_VT\ai_review\artifacts\releases;" + $env:PATH
+$env:PATH = "F:\1C\Projects\RT_VT\ai_review\artifacts\releases\win-x64;" + $env:PATH
 
 # Permanent (user level)
 [Environment]::SetEnvironmentVariable("PATH", 
-    "F:\1C\Projects\RT_VT\ai_review\artifacts\releases;" + 
+    "F:\1C\Projects\RT_VT\ai_review\artifacts\releases\win-x64;" + 
     [Environment]::GetEnvironmentVariable("PATH", "User"),
     "User")
 ```
@@ -45,7 +48,7 @@ $env:PATH = "F:\1C\Projects\RT_VT\ai_review\artifacts\releases;" + $env:PATH
 Add to `~/.bashrc` or `~/.zshrc`:
 
 ```bash
-export PATH="/path/to/ai_review/artifacts/releases:$PATH"
+export PATH="/path/to/ai_review/artifacts/releases/linux-x64:$PATH"
 ```
 
 ## Using with Sync-AiReviewKnowledge.ps1
@@ -58,7 +61,7 @@ After building and setting PATH:
 
 # Or specify explicit path
 . 'F:\1C\Projects\RT_VT\sppr_gitflic\tools\ai-review\Sync-AiReviewKnowledge.ps1' `
-    -AiReviewExecutable 'F:\1C\Projects\RT_VT\ai_review\artifacts\releases\ai-review-windows-amd64.exe' `
+    -AiReviewExecutable 'F:\1C\Projects\RT_VT\ai_review\artifacts\releases\win-x64\ai-review.exe' `
     -MergeRequestId 123
 ```
 

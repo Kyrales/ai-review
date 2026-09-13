@@ -31,8 +31,11 @@ share/python-wheels/
 *.egg
 MANIFEST
 
-# Release artifacts
-/artifacts/releases/
+# Release binaries
+/artifacts/releases/*
+!/artifacts/releases/*/
+/artifacts/releases/*/*
+!/artifacts/releases/*/.gitkeep
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
