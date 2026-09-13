@@ -184,7 +184,7 @@ class RulesDocument:
 
     def with_rules(self, lines: list[str] | tuple[str, ...]) -> bytes:
         for rule in lines:
-            _validate_rule(rule)
+            validate_rule(rule)
         body = self._eol + b"".join(
             b"- " + rule.encode("utf-8") + self._eol for rule in lines
         )
