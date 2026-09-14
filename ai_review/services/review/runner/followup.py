@@ -11,7 +11,7 @@ from ai_review.services.diff.one_c import (
     is_ignored_role_template_line,
 )
 from ai_review.services.git.types import GitServiceProtocol
-from ai_review.services.knowledge.block import render_knowledge_block
+from ai_review.services.knowledge.block import parse_knowledge_block, render_knowledge_block
 from ai_review.services.knowledge.extractor import KnowledgeExtractor
 from ai_review.services.knowledge.schema import (
     EligibleKnowledgeSource,
@@ -128,11 +128,14 @@ class FollowupReviewRunner:
             )
         ]
 
-    def _last_followup_is_terminal(self, thread: ReviewThreadSchema) -> bool:
+    def _last_followup_requires_resolve(self, thread: ReviewThreadSchema) -> bool:
         for comment in reversed(thread.comments):
             marker = parse_marker(comment.body, comment.author.id, self.author_id)
             if marker and marker.kind is MarkerKind.FOLLOWUP:
-                return marker.verdict in {"fixed", "withdrawn"}
+                return (
+                    marker.verdict in {"fixed", "withdrawn"}
+                    or parse_knowledge_block(comment.body) is not None
+                )
         return False
 
     async def _context(self, thread: ReviewThreadSchema) -> tuple[str, str]:
@@ -247,7 +250,7 @@ class FollowupReviewRunner:
             ):
                 await self.vcs.resolve_thread(thread.id)
                 return
-            if self._last_followup_is_terminal(thread) and isinstance(
+            if self._last_followup_requires_resolve(thread) and isinstance(
                 self.vcs, SupportsResolvableThreads
             ):
                 refreshed = next(
@@ -260,8 +263,9 @@ class FollowupReviewRunner:
                 )
                 if (
                     refreshed is not None
+                    and refreshed.resolved is not True
                     and not self._pending(refreshed)
-                    and self._last_followup_is_terminal(refreshed)
+                    and self._last_followup_requires_resolve(refreshed)
                 ):
                     await self.vcs.resolve_thread(thread.id)
             return
@@ -306,15 +310,24 @@ class FollowupReviewRunner:
         refreshed = await FollowupPublicationStateMachine(
             self.vcs, self.author_id
         ).publish(thread, message, key)
-        if result.verdict not in {"fixed", "withdrawn"} or not isinstance(
+        if (result.verdict not in {"fixed", "withdrawn"} and not knowledge) or not isinstance(
             self.vcs, SupportsResolvableThreads
         ):
             return
-        if (
-            refreshed.thread.id == thread.id
-            and not refreshed.origin_was_closed
-            and not (set(self._pending(refreshed.thread)) - set(pending))
+        if refreshed.thread.id != thread.id or (
+            refreshed.origin_was_closed
+            and not getattr(self.vcs, "reply_reopens_resolved", False)
         ):
+            return
+        latest = next(
+            (
+                item
+                for item in await self.vcs.get_inline_threads()
+                if item.id == thread.id
+            ),
+            None,
+        )
+        if latest is not None and not (set(self._pending(latest)) - set(pending)):
             await self.vcs.resolve_thread(thread.id)
 
     async def run(self) -> None:

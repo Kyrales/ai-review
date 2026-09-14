@@ -24,7 +24,8 @@ from ai_review.services.vcs.types import (
 
 class GitFlicVCSClient(VCSClientProtocol):
     provider = VCSProvider.GITFLIC
-    can_reply_resolved = False
+    can_reply_resolved = True
+    reply_reopens_resolved = True
     can_reopen = False
 
     def __init__(self) -> None:
@@ -143,26 +144,6 @@ class GitFlicVCSClient(VCSClientProtocol):
             comments=cls._comments(discussion),
             resolved=discussion.resolved,
         )
-
-    async def create_continuation_thread(
-        self,
-        origin_thread_id: str | int,
-        file: str | None,
-        line: int | None,
-        publication_message: str,
-    ) -> ReviewThreadSchema:
-        del file, line
-        message = (
-            f"Продолжение закрытой дискуссии `{origin_thread_id}`.\n\n"
-            f"{publication_message}"
-        )
-        created = await self.http_client.create_discussion(
-            self.owner,
-            self.project,
-            self.merge_request_id,
-            request=GitFlicCreateDiscussion(message=message),
-        )
-        return self._thread(GitFlicDiscussion(**created.model_dump(), replies=[]))
 
     async def get_inline_threads(self) -> list[ReviewThreadSchema]:
         return [

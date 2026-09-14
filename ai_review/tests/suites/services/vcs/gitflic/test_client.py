@@ -136,21 +136,21 @@ async def test_client_maps_review_and_threads(gitflic_http):
 
 
 @pytest.mark.asyncio
-async def test_gitflic_declares_only_confirmed_closed_thread_capabilities(
+async def test_gitflic_replies_to_closed_thread_in_place(
     gitflic_http,
 ):
     client = GitFlicVCSClient()
 
-    continuation = await client.create_continuation_thread(
-        "closed-thread", None, None, "publication"
-    )
+    await client.create_inline_reply("closed-thread", "publication")
 
-    assert client.can_reply_resolved is False
+    assert client.can_reply_resolved is True
+    assert client.reply_reopens_resolved is True
     assert client.can_reopen is False
-    assert (continuation.id, continuation.resolved) == ("created", None)
-    request = gitflic_http.create_discussion.await_args.kwargs["request"]
-    assert request.message.startswith("Продолжение закрытой дискуссии `closed-thread`")
-    assert request.message.endswith("publication")
+    assert not hasattr(client, "create_continuation_thread")
+    gitflic_http.reply.assert_awaited_once_with(
+        "rt-vt", "sppr", 41, "closed-thread", "publication"
+    )
+    gitflic_http.create_discussion.assert_not_awaited()
 
 
 @pytest.mark.asyncio
