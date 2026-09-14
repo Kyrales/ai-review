@@ -72,10 +72,16 @@ async def test_trusted_pending_reply_is_extracted_after_verdict(monkeypatch):
         author=UserSchema(id="other-id", username="other"),
         body="Не использовать как знание",
     )
-    item = thread([finding, trusted, untrusted])
+    item = thread([finding, untrusted, trusted])
     events: list[str] = []
     gateway = SimpleNamespace(
-        ask=AsyncMock(side_effect=lambda *_: events.append("verdict") or '{"verdict":"open","message":"Проверено"}')
+        ask=AsyncMock(
+            side_effect=lambda *_: events.append("verdict")
+            or (
+                '{"verdict":"withdrawn","message":"Проверено","silent":true,'
+                '"silent_source_reply_id":"trusted-1"}'
+            )
+        )
     )
     extractor = SimpleNamespace(
         extract=AsyncMock(
@@ -699,3 +705,246 @@ async def test_ignored_template_fast_path_still_extracts_trusted_knowledge(monke
     verdict_gateway.ask.assert_not_awaited()
     extractor.extract.assert_awaited_once()
     assert "#ai-review-knowledge" in vcs.create_inline_reply.await_args.args[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("resolved", [False, True])
+async def test_trusted_reviewer_withdrawal_is_silent_and_closes(monkeypatch, resolved):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    monkeypatch.setattr(
+        settings,
+        "knowledge",
+        KnowledgeConfig(
+            enabled=True,
+            trusted_reviewers=TrustedReviewersConfig(gitflic=["Lead"]),
+        ),
+    )
+    finding = ReviewCommentSchema(
+        id="root",
+        body=decorate_ai_message(
+            "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+        ),
+        author=UserSchema(id="owner", username="lead"),
+    )
+    decision = ReviewCommentSchema(
+        id="decision",
+        parent_id="thread",
+        author=UserSchema(id="lead-id", username="lead"),
+        body="Это ложное срабатывание, замечание следует снять.",
+    )
+    item = ReviewThreadSchema(
+        id="thread",
+        kind=ThreadKind.INLINE,
+        comments=[finding, decision],
+        resolved=resolved,
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(
+            return_value=(
+                '{"verdict":"withdrawn","message":"Замечание снято","silent":true,'
+                '"silent_source_reply_id":"decision"}'
+            )
+        )
+    )
+    extractor = SimpleNamespace(extract=AsyncMock(return_value=()))
+    vcs = SimpleNamespace(
+        provider="GITFLIC",
+        project_key="owner/project",
+        merge_request_id=1,
+        get_inline_threads=(
+            AsyncMock(return_value=[item])
+            if resolved
+            else AsyncMock(side_effect=[[item], [item]])
+        ),
+        get_general_threads=AsyncMock(return_value=[]),
+        create_inline_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+
+    await FollowupReviewRunner(vcs, gateway, knowledge_extractor=extractor).run()
+
+    prompt, system_prompt = gateway.ask.await_args.args
+    assert "последний новый ответ главного ревьювера: decision" in prompt
+    assert "только помеченный последний ответ" in system_prompt
+    vcs.create_inline_reply.assert_not_awaited()
+    if resolved:
+        vcs.resolve_thread.assert_not_awaited()
+    else:
+        vcs.resolve_thread.assert_awaited_once_with("thread")
+
+
+@pytest.mark.asyncio
+async def test_untrusted_reviewer_cannot_silently_withdraw(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    monkeypatch.setattr(
+        settings,
+        "knowledge",
+        KnowledgeConfig(
+            enabled=True,
+            trusted_reviewers=TrustedReviewersConfig(gitflic=["Lead"]),
+        ),
+    )
+    finding = ReviewCommentSchema(
+        id="root",
+        body=decorate_ai_message(
+            "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+        ),
+        author=UserSchema(id="owner"),
+    )
+    reply = ReviewCommentSchema(
+        id="reply",
+        parent_id="thread",
+        author=UserSchema(id="developer", username="developer"),
+        body="Это не ошибка.",
+    )
+    item = thread([finding, reply])
+    vcs = SimpleNamespace(
+        provider="GITFLIC",
+        project_key="owner/project",
+        merge_request_id=1,
+        get_inline_threads=AsyncMock(return_value=[item]),
+        get_general_threads=AsyncMock(return_value=[]),
+        create_inline_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(
+            return_value=(
+                '{"verdict":"withdrawn","message":"Замечание снято","silent":true,'
+                '"silent_source_reply_id":"reply"}'
+            )
+        )
+    )
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    vcs.create_inline_reply.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_stale_trusted_decision_cannot_silently_withdraw(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    monkeypatch.setattr(
+        settings,
+        "knowledge",
+        KnowledgeConfig(
+            enabled=True,
+            trusted_reviewers=TrustedReviewersConfig(gitflic=["Lead"]),
+        ),
+    )
+    finding = ReviewCommentSchema(
+        id="root",
+        body=decorate_ai_message(
+            "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+        ),
+        author=UserSchema(id="owner"),
+    )
+    old_decision = ReviewCommentSchema(
+        id="old-decision",
+        parent_id="thread",
+        author=UserSchema(id="lead-id", username="lead"),
+        body="Замечание следует снять.",
+    )
+    latest_question = ReviewCommentSchema(
+        id="question",
+        parent_id="thread",
+        author=UserSchema(id="lead-id", username="lead"),
+        body="А это точно работает для управляемой формы?",
+    )
+    item = thread([finding, old_decision, latest_question])
+    vcs = SimpleNamespace(
+        provider="GITFLIC",
+        project_key="owner/project",
+        merge_request_id=1,
+        get_inline_threads=AsyncMock(return_value=[item]),
+        get_general_threads=AsyncMock(return_value=[]),
+        create_inline_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(
+            return_value=(
+                '{"verdict":"withdrawn","message":"Замечание снято","silent":true,'
+                '"silent_source_reply_id":"old-decision"}'
+            )
+        )
+    )
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    vcs.create_inline_reply.assert_awaited_once()
+    vcs.resolve_thread.assert_awaited_once_with("thread")
+
+
+@pytest.mark.asyncio
+async def test_silent_withdrawal_does_not_close_after_new_reply(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    monkeypatch.setattr(
+        settings,
+        "knowledge",
+        KnowledgeConfig(
+            enabled=True,
+            trusted_reviewers=TrustedReviewersConfig(gitflic=["Lead"]),
+        ),
+    )
+    finding = ReviewCommentSchema(
+        id="root",
+        body=decorate_ai_message(
+            "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+        ),
+        author=UserSchema(id="owner"),
+    )
+    decision = ReviewCommentSchema(
+        id="decision",
+        parent_id="thread",
+        author=UserSchema(id="lead-id", username="lead"),
+        body="Это ложное срабатывание.",
+    )
+    new_reply = ReviewCommentSchema(
+        id="11111111-1111-4111-8111-111111111111",
+        parent_id="thread",
+        author=UserSchema(id="developer", username="developer"),
+        body="Добавлю ещё контекст.",
+    )
+    parallel_followup = ReviewCommentSchema(
+        id="parallel-followup",
+        parent_id="thread",
+        author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Ответ уже обработан параллельным запуском.",
+            ReviewMarker(
+                kind=MarkerKind.FOLLOWUP,
+                head=HEAD,
+                covered=("11111111-1111-4111-8111-111111111111",),
+                verdict="open",
+            ),
+        ),
+    )
+    original = thread([finding, decision])
+    refreshed = thread([finding, decision, new_reply, parallel_followup])
+    vcs = SimpleNamespace(
+        provider="GITFLIC",
+        project_key="owner/project",
+        merge_request_id=1,
+        get_inline_threads=AsyncMock(side_effect=[[original], [refreshed]]),
+        get_general_threads=AsyncMock(return_value=[]),
+        create_inline_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(
+            return_value=(
+                '{"verdict":"withdrawn","message":"Замечание снято","silent":true,'
+                '"silent_source_reply_id":"decision"}'
+            )
+        )
+    )
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    vcs.create_inline_reply.assert_not_awaited()
+    vcs.resolve_thread.assert_not_awaited()
