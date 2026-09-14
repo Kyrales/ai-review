@@ -74,7 +74,8 @@ async def test_preview_rechecks_open_state_reads_threads_and_returns_full_transa
 @pytest.mark.asyncio
 async def test_preview_rejects_review_closed_after_selection(tmp_path: Path):
     """Catches compiling knowledge from an MR closed after the table was shown."""
-    rules = tmp_path / "rules.md"; rules.write_text("# Rules\n", encoding="utf-8")
+    rules = tmp_path / "rules.md"
+    rules.write_text("# Rules\n", encoding="utf-8")
     raw = FakeKnowledgeSource(state="closed")
     with pytest.raises(ReviewClosedError, match="52"):
         await KnowledgeSyncService(VerifiedSource(raw), FakeCompiler(), rules).preview(["52"])
@@ -84,7 +85,8 @@ async def test_preview_rejects_review_closed_after_selection(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_preview_does_not_call_compiler_when_knowledge_disappeared(tmp_path: Path):
     """Catches an unnecessary LLM call after the repeated read finds no knowledge."""
-    rules = tmp_path / "rules.md"; rules.write_text("# Rules\n", encoding="utf-8")
+    rules = tmp_path / "rules.md"
+    rules.write_text("# Rules\n", encoding="utf-8")
     raw = FakeKnowledgeSource()
     verified = VerifiedSource(raw)
     async def none(*_args, **_kwargs): return ()
@@ -99,7 +101,10 @@ async def test_preview_does_not_call_compiler_when_knowledge_disappeared(tmp_pat
 @pytest.mark.parametrize("folder,rules_name", [("one", "rules.md"), ("two", "nested/project.md")])
 async def test_same_service_is_portable_between_repository_layouts(tmp_path: Path, folder: str, rules_name: str):
     """Catches project-specific owner, root or rules-path assumptions in the orchestrator."""
-    root = tmp_path / folder; path = root / rules_name; path.parent.mkdir(parents=True); path.write_text("# R\n", encoding="utf-8")
+    root = tmp_path / folder
+    path = root / rules_name
+    path.parent.mkdir(parents=True)
+    path.write_text("# R\n", encoding="utf-8")
     raw = FakeKnowledgeSource()
     preview = await KnowledgeSyncService(VerifiedSource(raw), FakeCompiler(), path).preview(["1"])
     assert str(path) in preview.diff

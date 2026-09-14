@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from pydantic import Field
-from pydantic_settings import BaseSettings, SettingsConfigDict, PydanticBaseSettingsSource, JsonConfigSettingsSource
+from pydantic_settings import BaseSettings, JsonConfigSettingsSource, SettingsConfigDict
 
 from ai_review.libs.config.agent import AgentConfig
 from ai_review.libs.config.artifacts import ArtifactsConfig
