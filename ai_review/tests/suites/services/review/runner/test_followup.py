@@ -7,6 +7,7 @@ from ai_review.config import settings
 from ai_review.services.review.runner.followup import FollowupReviewRunner
 from ai_review.services.review.runner.followup_publication import RESTORE_RESOLVED_MARKER
 from ai_review.libs.config.knowledge import KnowledgeConfig, TrustedReviewersConfig
+from ai_review.services.knowledge.block import render_knowledge_block
 from ai_review.services.knowledge.schema import KnowledgeCandidate
 from ai_review.services.vcs.gitflic.markers import (
     MarkerKind,
@@ -98,6 +99,7 @@ async def test_trusted_pending_reply_is_extracted_after_verdict(monkeypatch):
     sources = extractor.extract.await_args.args[1]
     assert [(source.reply_id, source.username) for source in sources] == [("trusted-1", "lead")]
     assert "#ai-review-knowledge" in vcs.create_inline_reply.await_args.args[1]
+    vcs.resolve_thread.assert_awaited_once_with("thread")
 
 
 @pytest.mark.asyncio
@@ -157,7 +159,7 @@ async def test_withdrawn_is_published_and_resolved(monkeypatch):
     )
     vcs = SimpleNamespace(
         provider="GITFLIC", project_key="owner/project", merge_request_id=1,
-        get_inline_threads=AsyncMock(side_effect=[[before], [after]]),
+        get_inline_threads=AsyncMock(side_effect=[[before], [after], [after]]),
         get_general_threads=AsyncMock(return_value=[]),
         create_inline_reply=AsyncMock(), resolve_thread=AsyncMock(),
     )
@@ -246,8 +248,8 @@ async def test_reopen_resolve_failure_retries_only_resolve(monkeypatch, verdict)
 
 
 @pytest.mark.asyncio
-async def test_terminal_direct_reply_to_closed_thread_does_not_double_resolve(monkeypatch):
-    """Catches runner resolving an origin already kept closed by the state machine."""
+async def test_terminal_gitflic_reply_recloses_origin_thread(monkeypatch):
+    """GitFlic opens a resolved discussion when a reply is added, so close it again."""
     monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
     monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
     finding = ReviewCommentSchema(
@@ -261,7 +263,7 @@ async def test_terminal_direct_reply_to_closed_thread_does_not_double_resolve(mo
     )
     vcs = SimpleNamespace(
         provider="GITFLIC", project_key="owner/project", merge_request_id=1,
-        can_reply_resolved=True, can_reopen=False,
+        can_reply_resolved=True, reply_reopens_resolved=True, can_reopen=False,
         get_inline_threads=AsyncMock(return_value=[origin]), get_general_threads=AsyncMock(return_value=[]),
         create_inline_reply=AsyncMock(), resolve_thread=AsyncMock(),
     )
@@ -270,7 +272,7 @@ async def test_terminal_direct_reply_to_closed_thread_does_not_double_resolve(mo
     await FollowupReviewRunner(vcs, gateway).run()
 
     vcs.create_inline_reply.assert_awaited_once()
-    vcs.resolve_thread.assert_not_awaited()
+    vcs.resolve_thread.assert_awaited_once_with("thread")
 
 
 @pytest.mark.asyncio
@@ -306,7 +308,7 @@ async def test_fixed_does_not_resolve_when_new_reply_arrives(monkeypatch):
         ]
     )
     vcs = SimpleNamespace(
-        get_inline_threads=AsyncMock(side_effect=[[first], [second]]),
+        get_inline_threads=AsyncMock(side_effect=[[first], [first], [second]]),
         create_inline_reply=AsyncMock(),
         resolve_thread=AsyncMock(),
     )
@@ -350,6 +352,118 @@ async def test_pending_resolve_retries_without_llm(monkeypatch):
 
     vcs.resolve_thread.assert_awaited_once_with("thread")
     gateway.ask.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_pending_knowledge_resolve_retries_without_llm(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    finding = ReviewCommentSchema(
+        id="root",
+        body=decorate_ai_message(
+            "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+        ),
+        author=UserSchema(id="owner"),
+    )
+    followup = ReviewCommentSchema(
+        id="ai",
+        parent_id="thread",
+        author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Проверено\n\n"
+            + render_knowledge_block((knowledge_candidate("human"),)),
+            ReviewMarker(
+                version="v2",
+                kind=MarkerKind.FOLLOWUP,
+                head=HEAD,
+                covered=("human",),
+                verdict="open",
+                origin="thread",
+                publication="c" * 64,
+            ),
+        ),
+    )
+    item = thread([finding, followup])
+    vcs = SimpleNamespace(
+        get_inline_threads=AsyncMock(return_value=[item]),
+        create_inline_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(ask=AsyncMock())
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    vcs.resolve_thread.assert_awaited_once_with("thread")
+    gateway.ask.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_bare_knowledge_tag_does_not_trigger_resolve_retry(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    finding = ReviewCommentSchema(
+        id="root",
+        author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+        ),
+    )
+    followup = ReviewCommentSchema(
+        id="ai",
+        author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Повреждено\n\n#ai-review-knowledge",
+            ReviewMarker(
+                version="v2",
+                kind=MarkerKind.FOLLOWUP,
+                head=HEAD,
+                covered=("human",),
+                verdict="open",
+                origin="thread",
+                publication="d" * 64,
+            ),
+        ),
+    )
+    item = thread([finding, followup])
+    vcs = SimpleNamespace(
+        get_inline_threads=AsyncMock(return_value=[item]),
+        resolve_thread=AsyncMock(),
+    )
+
+    await FollowupReviewRunner(vcs, SimpleNamespace(ask=AsyncMock())).run()
+
+    vcs.resolve_thread.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_already_resolved_followup_is_not_resolved_again(monkeypatch):
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    finding = ReviewCommentSchema(
+        id="root",
+        author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+        ),
+    )
+    followup = ReviewCommentSchema(
+        id="ai",
+        author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Исправлено",
+            ReviewMarker(kind=MarkerKind.FOLLOWUP, head=HEAD, verdict="fixed"),
+        ),
+    )
+    item = thread([finding, followup])
+    item.resolved = True
+    vcs = SimpleNamespace(
+        get_inline_threads=AsyncMock(return_value=[item]),
+        resolve_thread=AsyncMock(),
+    )
+
+    await FollowupReviewRunner(vcs, SimpleNamespace(ask=AsyncMock())).run()
+
+    vcs.resolve_thread.assert_not_awaited()
 
 
 @pytest.mark.asyncio
