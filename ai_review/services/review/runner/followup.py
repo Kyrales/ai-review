@@ -34,6 +34,7 @@ from ai_review.services.vcs.types import (
     ReviewCommentSchema,
     ReviewThreadSchema,
     SupportsResolvableThreads,
+    ThreadKind,
     VCSClientProtocol,
 )
 
@@ -157,6 +158,17 @@ class FollowupReviewRunner:
                 )
         return False
 
+    async def _find_thread(
+        self, thread_id: str | int, kind: ThreadKind
+    ) -> ReviewThreadSchema | None:
+        getter_name = (
+            "get_general_threads" if kind is ThreadKind.SUMMARY else "get_inline_threads"
+        )
+        getter = getattr(self.vcs, getter_name, None)
+        if getter is None:
+            return None
+        return next((item for item in await getter() if item.id == thread_id), None)
+
     async def _context(
         self,
         thread: ReviewThreadSchema,
@@ -177,7 +189,13 @@ class FollowupReviewRunner:
             discussion_parts.append(f"[{role}: {author}]\n{comment.body[:4000]}")
         discussion = "\n\n".join(discussion_parts)
         code_context = ""
-        if self.git is not None and thread.file:
+        if self.git is not None and thread.kind is ThreadKind.SUMMARY:
+            review_info = await self.vcs.get_review_info()
+            diff = self.git.get_diff(
+                review_info.base_sha, review_info.head_sha, unified=20
+            )[:12000]
+            code_context = f"\n\nАктуальный diff:\n{diff}"
+        elif self.git is not None and thread.file:
             review_info = await self.vcs.get_review_info()
             current = (
                 self.git.get_file_at_commit(thread.file, review_info.head_sha) or ""
@@ -301,14 +319,7 @@ class FollowupReviewRunner:
             if self._last_followup_requires_resolve(thread) and isinstance(
                 self.vcs, SupportsResolvableThreads
             ):
-                refreshed = next(
-                    (
-                        item
-                        for item in await self.vcs.get_inline_threads()
-                        if item.id == thread.id
-                    ),
-                    None,
-                )
+                refreshed = await self._find_thread(thread.id, thread.kind)
                 if (
                     refreshed is not None
                     and refreshed.resolved is not True
@@ -358,14 +369,7 @@ class FollowupReviewRunner:
             if thread.resolved is not True and isinstance(
                 self.vcs, SupportsResolvableThreads
             ):
-                latest = next(
-                    (
-                        item
-                        for item in await self.vcs.get_inline_threads()
-                        if item.id == thread.id
-                    ),
-                    None,
-                )
+                latest = await self._find_thread(thread.id, thread.kind)
                 if (
                     latest is not None
                     and latest.resolved is not True
@@ -399,15 +403,12 @@ class FollowupReviewRunner:
             and not getattr(self.vcs, "reply_reopens_resolved", False)
         ):
             return
-        latest = next(
-            (
-                item
-                for item in await self.vcs.get_inline_threads()
-                if item.id == thread.id
-            ),
-            None,
-        )
-        if latest is not None and not (set(self._pending(latest)) - set(pending)):
+        latest = await self._find_thread(thread.id, thread.kind)
+        if (
+            latest is not None
+            and not (self._human_reply_ids(latest) - human_reply_ids)
+            and not (set(self._pending(latest)) - set(pending))
+        ):
             await self.vcs.resolve_thread(thread.id)
 
     async def run(self) -> None:
@@ -419,12 +420,22 @@ class FollowupReviewRunner:
         get_general = getattr(self.vcs, "get_general_threads", None)
         general_threads = await get_general() if get_general is not None else []
         related_threads = tuple([*inline_threads, *general_threads])
-        for thread in inline_threads:
+        for thread in related_threads:
             root = thread.comments[0] if thread.comments else None
             marker = (
                 parse_marker(root.body, root.author.id, self.author_id)
                 if root
                 else None
             )
-            if marker and marker.kind is MarkerKind.FINDING:
+            matches_kind = marker is not None and (
+                (
+                    thread.kind is ThreadKind.INLINE
+                    and marker.kind is MarkerKind.FINDING
+                )
+                or (
+                    thread.kind is ThreadKind.SUMMARY
+                    and marker.kind is MarkerKind.SUMMARY
+                )
+            )
+            if matches_kind:
                 await self._process(thread, related_threads)

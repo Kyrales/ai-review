@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 
 from ai_review.services.vcs.markers import MarkerKind, parse_marker
-from ai_review.services.vcs.types import ReviewThreadSchema
+from ai_review.services.vcs.types import ReviewThreadSchema, ThreadKind
 
 
 RESTORE_RESOLVED_MARKER = "<!-- ai-review-restore-resolved -->"
@@ -77,6 +77,11 @@ class FollowupPublicationStateMachine:
             return published
         return None
 
+    def _reply(self, origin: ReviewThreadSchema, message: str) -> Awaitable[None]:
+        if origin.kind is ThreadKind.SUMMARY:
+            return self.vcs.create_summary_reply(origin.id, message)
+        return self.vcs.create_inline_reply(origin.id, message)
+
     async def publish(
         self,
         origin: ReviewThreadSchema,
@@ -100,7 +105,7 @@ class FollowupPublicationStateMachine:
 
         if was_closed and getattr(self.vcs, "can_reply_resolved", False):
             published = await self._post_or_discover(
-                lambda: self.vcs.create_inline_reply(origin.id, message), publication_key
+                lambda: self._reply(origin, message), publication_key
             )
             return PublicationResult(published or current_origin, True)
 
@@ -115,7 +120,7 @@ class FollowupPublicationStateMachine:
                     raise RuntimeError("discussion did not reopen")
                 recovery_message = f"{message}\n\n{RESTORE_RESOLVED_MARKER}"
                 published = await self._post_or_discover(
-                    lambda: self.vcs.create_inline_reply(origin.id, recovery_message),
+                    lambda: self._reply(origin, recovery_message),
                     publication_key,
                 )
                 return PublicationResult(published or reopened, True)
@@ -140,6 +145,6 @@ class FollowupPublicationStateMachine:
             return PublicationResult(continuation, was_closed)
 
         published = await self._post_or_discover(
-            lambda: self.vcs.create_inline_reply(origin.id, message), publication_key
+            lambda: self._reply(origin, message), publication_key
         )
         return PublicationResult(published or current_origin, False)

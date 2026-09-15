@@ -154,6 +154,60 @@ async def test_provider_can_reply_to_closed_origin_without_state_change():
 
 
 @pytest.mark.asyncio
+async def test_open_summary_uses_summary_reply_api():
+    """Catches routing a general discussion through the inline reply contract."""
+    origin = item("origin", resolved=False).model_copy(
+        update={"kind": ThreadKind.SUMMARY}
+    )
+    vcs = SimpleNamespace(
+        can_reply_resolved=False,
+        can_reopen=False,
+        create_inline_reply=AsyncMock(),
+        create_summary_reply=AsyncMock(),
+        get_inline_threads=AsyncMock(return_value=[]),
+        get_general_threads=AsyncMock(return_value=[origin]),
+    )
+
+    await FollowupPublicationStateMachine(vcs, "owner").publish(
+        origin, "message", "9" * 64
+    )
+
+    vcs.create_summary_reply.assert_awaited_once_with("origin", "message")
+    vcs.create_inline_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direct_reply", [True, False])
+async def test_closed_summary_uses_summary_reply_api(direct_reply):
+    """Catches an inline API call in either resolved-summary publication path."""
+    origin = item("origin", resolved=True).model_copy(
+        update={"kind": ThreadKind.SUMMARY}
+    )
+    reopened = origin.model_copy(update={"resolved": False})
+    vcs = SimpleNamespace(
+        can_reply_resolved=direct_reply,
+        can_reopen=not direct_reply,
+        reply_reopens_resolved=False,
+        reopen_thread=AsyncMock(),
+        resolve_thread=AsyncMock(),
+        create_inline_reply=AsyncMock(),
+        create_summary_reply=AsyncMock(),
+        get_inline_threads=AsyncMock(return_value=[]),
+        get_general_threads=AsyncMock(
+            return_value=[origin] if direct_reply else None,
+            side_effect=None if direct_reply else [[origin], [reopened]],
+        ),
+    )
+
+    await FollowupPublicationStateMachine(vcs, "owner").publish(
+        origin, "message", "a" * 64
+    )
+
+    vcs.create_summary_reply.assert_awaited_once()
+    vcs.create_inline_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("resolved,can_reply", [(False, False), (True, True)])
 async def test_ambiguous_direct_post_recovers_when_publication_is_found(resolved, can_reply):
     """Catches missing discovery for both ordinary-open and direct-closed POSTs."""
