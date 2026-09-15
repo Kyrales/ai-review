@@ -75,6 +75,16 @@ def test_load_summary_prompts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     assert config.load_summary() == ["SUM"]
 
 
+def test_default_summary_requires_traceable_risk_location():
+    """Catches concrete summary risks losing their source evidence."""
+    summary = "\n".join(PromptConfig().load_summary())
+    normalized = summary.casefold()
+
+    assert "all changed or affected files related to it" in normalized
+    assert "for each file" in normalized
+    assert "exact source location" in normalized
+
+
 def test_load_inline_reply_prompts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     dummy_file = tmp_path / "inline_reply.md"
     dummy_file.write_text("INL_R")

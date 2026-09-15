@@ -948,3 +948,291 @@ async def test_silent_withdrawal_does_not_close_after_new_reply(monkeypatch):
 
     vcs.create_inline_reply.assert_not_awaited()
     vcs.resolve_thread.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_summary_reply_uses_whole_diff_and_summary_publication(monkeypatch):
+    """Catches ignoring a reply under the AI summary or treating it as inline."""
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    root = ReviewCommentSchema(
+        id="summary-root",
+        body=decorate_ai_message(
+            "summary",
+            ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=HEAD),
+        ),
+        author=UserSchema(id="owner"),
+    )
+    reply = ReviewCommentSchema(
+        id="summary-reply",
+        parent_id="summary-thread",
+        author=UserSchema(id="developer", username="developer"),
+        body="Проверка находится в модуле формы.",
+    )
+    summary = ReviewThreadSchema(
+        id="summary-thread",
+        kind=ThreadKind.SUMMARY,
+        comments=[root, reply],
+        resolved=False,
+    )
+    vcs = SimpleNamespace(
+        provider="GITFLIC",
+        project_key="owner/project",
+        merge_request_id=1,
+        get_inline_threads=AsyncMock(return_value=[]),
+        get_general_threads=AsyncMock(return_value=[summary]),
+        get_review_info=AsyncMock(
+            return_value=SimpleNamespace(base_sha="base", head_sha="head")
+        ),
+        create_inline_reply=AsyncMock(),
+        create_summary_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(return_value='{"verdict":"open","message":"Проверено"}')
+    )
+    whole_diff = "UNIQUE-WHOLE-DIFF\n" + "x" * 13000
+    git = SimpleNamespace(
+        get_diff=lambda *_args, **_kwargs: whole_diff,
+        get_diff_for_file=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("summary must not request a file diff")
+        ),
+        get_file_at_commit=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("summary must not request a file")
+        ),
+    )
+
+    await FollowupReviewRunner(vcs, gateway, git=git).run()
+
+    prompt = gateway.ask.await_args.args[0]
+    assert "UNIQUE-WHOLE-DIFF" in prompt
+    assert len(prompt.partition("Актуальный diff:\n")[2]) <= 12000
+    vcs.get_review_info.assert_awaited_once()
+    vcs.create_summary_reply.assert_awaited_once()
+    vcs.create_inline_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_summary_fixed_reply_is_closed(monkeypatch):
+    """Catches leaving a general summary discussion open after a terminal verdict."""
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    root = ReviewCommentSchema(
+        id="summary-root",
+        body=decorate_ai_message(
+            "summary",
+            ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=HEAD),
+        ),
+        author=UserSchema(id="owner"),
+    )
+    reply = ReviewCommentSchema(
+        id="summary-reply", parent_id="summary-thread", body="Исправлено"
+    )
+    before = ReviewThreadSchema(
+        id="summary-thread", kind=ThreadKind.SUMMARY,
+        comments=[root, reply], resolved=False,
+    )
+    followup = ReviewCommentSchema(
+        id="followup", parent_id="summary-thread", author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Проверено",
+            ReviewMarker(
+                version="v2", kind=MarkerKind.FOLLOWUP, head=HEAD,
+                covered=("summary-reply",), verdict="fixed",
+                origin="summary-thread", publication="b" * 64,
+            ),
+        ),
+    )
+    after = before.model_copy(update={"comments": [root, reply, followup]})
+    vcs = SimpleNamespace(
+        provider="GITFLIC", project_key="owner/project", merge_request_id=1,
+        get_inline_threads=AsyncMock(return_value=[]),
+        get_general_threads=AsyncMock(side_effect=[[before], [after], [after]]),
+        create_inline_reply=AsyncMock(), create_summary_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(return_value='{"verdict":"fixed","message":"Проверено"}')
+    )
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    vcs.create_summary_reply.assert_awaited_once()
+    vcs.resolve_thread.assert_awaited_once_with("summary-thread")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("version", ["v1", "v2"])
+async def test_summary_covered_reply_is_not_processed_again(monkeypatch, version):
+    """Catches duplicate summary followup after a trusted v1/v2 publication."""
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    root = ReviewCommentSchema(
+        id="summary-root",
+        body=decorate_ai_message(
+            "summary", ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=HEAD)
+        ),
+        author=UserSchema(id="owner"),
+    )
+    reply_id = "33333333-3333-4333-8333-333333333333"
+    reply = ReviewCommentSchema(id=reply_id, parent_id="summary-thread", body="Ответ")
+    marker_kwargs = {}
+    if version == "v2":
+        marker_kwargs = {"origin": "summary-thread", "publication": "c" * 64}
+    covered = ReviewCommentSchema(
+        id="covered", parent_id="summary-thread", author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Проверено",
+            ReviewMarker(
+                version=version, kind=MarkerKind.FOLLOWUP, head=HEAD,
+                covered=(reply_id,), verdict="open", **marker_kwargs,
+            ),
+        ),
+    )
+    summary = ReviewThreadSchema(
+        id="summary-thread", kind=ThreadKind.SUMMARY,
+        comments=[root, reply, covered], resolved=False,
+    )
+    vcs = SimpleNamespace(
+        get_inline_threads=AsyncMock(return_value=[]),
+        get_general_threads=AsyncMock(return_value=[summary]),
+        create_inline_reply=AsyncMock(), create_summary_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(ask=AsyncMock())
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    gateway.ask.assert_not_awaited()
+    vcs.create_summary_reply.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_summary_terminal_followup_retries_only_close(monkeypatch):
+    """Catches retrying the LLM instead of completing an interrupted summary close."""
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    root = ReviewCommentSchema(
+        id="summary-root",
+        body=decorate_ai_message(
+            "summary", ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=HEAD)
+        ),
+        author=UserSchema(id="owner"),
+    )
+    reply = ReviewCommentSchema(id="reply", parent_id="summary-thread", body="Исправлено")
+    covered = ReviewCommentSchema(
+        id="covered", parent_id="summary-thread", author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Проверено",
+            ReviewMarker(
+                version="v2", kind=MarkerKind.FOLLOWUP, head=HEAD,
+                covered=("reply",), verdict="fixed", origin="summary-thread",
+                publication="d" * 64,
+            ),
+        ),
+    )
+    summary = ReviewThreadSchema(
+        id="summary-thread", kind=ThreadKind.SUMMARY,
+        comments=[root, reply, covered], resolved=False,
+    )
+    vcs = SimpleNamespace(
+        get_inline_threads=AsyncMock(return_value=[]),
+        get_general_threads=AsyncMock(side_effect=[[summary], [summary]]),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(ask=AsyncMock())
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    gateway.ask.assert_not_awaited()
+    vcs.resolve_thread.assert_awaited_once_with("summary-thread")
+
+
+@pytest.mark.asyncio
+async def test_mismatched_thread_and_root_marker_kinds_are_ignored(monkeypatch):
+    """Catches silently broadening followup to malformed thread/marker pairs."""
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    inline_summary = ReviewThreadSchema(
+        id="inline", kind=ThreadKind.INLINE, comments=[ReviewCommentSchema(
+            id="inline-root", author=UserSchema(id="owner"),
+            body=decorate_ai_message(
+                "summary", ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=HEAD)
+            ),
+        ), ReviewCommentSchema(id="inline-reply", parent_id="inline", body="Ответ")],
+    )
+    general_finding = ReviewThreadSchema(
+        id="general", kind=ThreadKind.SUMMARY, comments=[ReviewCommentSchema(
+            id="general-root", author=UserSchema(id="owner"),
+            body=decorate_ai_message(
+                "finding", ReviewMarker(kind=MarkerKind.FINDING, head=HEAD)
+            ),
+        ), ReviewCommentSchema(id="general-reply", parent_id="general", body="Ответ")],
+    )
+    vcs = SimpleNamespace(
+        get_inline_threads=AsyncMock(return_value=[inline_summary]),
+        get_general_threads=AsyncMock(return_value=[general_finding]),
+    )
+    gateway = SimpleNamespace(ask=AsyncMock())
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    gateway.ask.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_summary_terminal_does_not_close_after_parallel_covered_reply(monkeypatch):
+    """Catches a stale fixed run closing a newer open summary conversation."""
+    monkeypatch.setenv("AI_REVIEW_GITFLIC_USER_ID", "owner")
+    monkeypatch.setenv("AI_REVIEW_HEAD_SHA", HEAD)
+    root = ReviewCommentSchema(
+        id="root", author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "summary", ReviewMarker(kind=MarkerKind.SUMMARY, status="complete", head=HEAD)
+        ),
+    )
+    first = ReviewCommentSchema(id="first", parent_id="summary", body="Исправлено")
+    original = ReviewThreadSchema(
+        id="summary", kind=ThreadKind.SUMMARY, comments=[root, first], resolved=False
+    )
+    fixed = ReviewCommentSchema(
+        id="fixed", parent_id="summary", author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Проверено",
+            ReviewMarker(
+                version="v2", kind=MarkerKind.FOLLOWUP, head=HEAD,
+                covered=("first",), verdict="fixed", origin="summary",
+                publication="e" * 64,
+            ),
+        ),
+    )
+    second = ReviewCommentSchema(id="second", parent_id="summary", body="Новый вопрос")
+    open_followup = ReviewCommentSchema(
+        id="open", parent_id="summary", author=UserSchema(id="owner"),
+        body=decorate_ai_message(
+            "Нужны детали",
+            ReviewMarker(
+                version="v2", kind=MarkerKind.FOLLOWUP, head=HEAD,
+                covered=("second",), verdict="open", origin="summary",
+                publication="f" * 64,
+            ),
+        ),
+    )
+    after_post = original.model_copy(update={"comments": [root, first, fixed]})
+    concurrent = original.model_copy(
+        update={"comments": [root, first, fixed, second, open_followup]}
+    )
+    vcs = SimpleNamespace(
+        provider="GITFLIC", project_key="owner/project", merge_request_id=1,
+        get_inline_threads=AsyncMock(return_value=[]),
+        get_general_threads=AsyncMock(side_effect=[[original], [after_post], [concurrent]]),
+        create_summary_reply=AsyncMock(), create_inline_reply=AsyncMock(),
+        resolve_thread=AsyncMock(),
+    )
+    gateway = SimpleNamespace(
+        ask=AsyncMock(return_value='{"verdict":"fixed","message":"Проверено"}')
+    )
+
+    await FollowupReviewRunner(vcs, gateway).run()
+
+    vcs.resolve_thread.assert_not_awaited()

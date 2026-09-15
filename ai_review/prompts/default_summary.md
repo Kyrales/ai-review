@@ -1,3 +1,6 @@
 - Write a short summary of the overall review.
 - Mention what was done well and highlight the most important issues or improvements.
 - Keep it clear and concise (2–4 sentences).  
+- For every concrete risk, name all changed or affected files related to it; do not list unrelated files.
+- For each file, when the context permits, name the 1C metadata object or method.
+- If an exact source location cannot be determined, state the available evidence and affected files.
