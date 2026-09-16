@@ -112,7 +112,7 @@ class KnowledgeLLMGateway:
             model=settings.model,
             input=[OpenAIInputMessageSchema(role="user", content=input_text)],
             instructions=instructions,
-            stream=False,
+            stream=True,
             reasoning=OpenAIReasoningSchema(
                 effort=settings.reasoning_effort,
             ),

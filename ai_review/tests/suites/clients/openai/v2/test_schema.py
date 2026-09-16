@@ -130,14 +130,14 @@ def test_reasoning_schema_rejects_invalid_contract(reasoning: dict):
         OpenAIReasoningSchema(**reasoning)
 
 
-def test_responses_request_schema_stream_defaults_to_false():
+def test_responses_request_schema_stream_defaults_to_true():
     msg = OpenAIInputMessageSchema(role="user", content="hi")
     req = OpenAIResponsesRequestSchema(model="gpt-5", input=[msg])
-    assert req.stream is False
+    assert req.stream is True
 
 
 def test_responses_request_schema_stream_included_in_payload():
     msg = OpenAIInputMessageSchema(role="user", content="hi")
     req = OpenAIResponsesRequestSchema(model="gpt-5", input=[msg])
     payload = req.model_dump(exclude_none=True)
-    assert payload["stream"] is False
+    assert payload["stream"] is True

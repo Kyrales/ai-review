@@ -158,7 +158,7 @@ def test_sync_gateway_import_does_not_require_global_review_settings(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_gateway_builds_one_non_streaming_responses_request():
+async def test_gateway_builds_one_streaming_responses_request():
     client = _FakeClient()
     settings = SyncLLMSettings(
         api_url=HttpUrl("https://codex.example/backend-api/codex"),
@@ -179,7 +179,7 @@ async def test_gateway_builds_one_non_streaming_responses_request():
     assert client.requests[0].model_dump(exclude_none=True) == {
         "model": "gpt-5.6-sol",
         "input": [{"role": "user", "content": "untrusted reviewer data"}],
-        "stream": False,
+        "stream": True,
         "reasoning": {"effort": "high"},
         "instructions": "Compile reusable rules.",
         "max_output_tokens": 4096,

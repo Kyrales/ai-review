@@ -46,7 +46,7 @@ class OpenAIReasoningSchema(BaseModel):
 class OpenAIResponsesRequestSchema(BaseModel):
     model: str
     input: list[OpenAIInputMessageSchema]
-    stream: bool = False
+    stream: bool = True
     reasoning: OpenAIReasoningSchema | None = None
     temperature: float | None = None
     instructions: str | None = None
