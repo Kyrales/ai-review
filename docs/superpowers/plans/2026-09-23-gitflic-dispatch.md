@@ -87,7 +87,7 @@
 - Consumes: `ReviewThreadSchema`, `ReviewCommentSchema`, `parse_marker`, `parse_knowledge_block`, trusted author ID.
 - Produces: `FollowupStateAnalyzer(trusted_author_id: str)` с методами `marker`, `pending_comments`, `pending_ids`, `continuations`, `last_followup_requires_resolve`, `resolve_thread_ids`.
 
-- [ ] **Step 1: Написать failing unit tests общего анализатора**
+- [x] **Step 1: Написать failing unit tests общего анализатора**
 
 Добавить fixtures для v1 covered UUID, v2 opaque Unicode ID/NFC, v2 continuation thread, damaged marker, terminal knowledge block и незакрытого `fixed`/`withdrawn`. Основной контракт:
 
@@ -101,7 +101,7 @@ assert analyzer.resolve_thread_ids(resolved_fixed, ()) == ()
 
 Отдельно проверить, что marker от чужого author остаётся human reply, canonical UUID trusted-author comparison case-insensitive, а не-UUID author ID сравнивается после NFC normalization строго. Parser-level test вызывает `parse_marker` с uppercase/lowercase представлениями одного UUID и с двумя различающимися opaque IDs.
 
-- [ ] **Step 2: Запустить новый test module и подтвердить RED**
+- [x] **Step 2: Запустить новый test module и подтвердить RED**
 
 Run:
 
@@ -111,7 +111,7 @@ pytest -q ai_review/tests/suites/services/review/test_followup_state.py
 
 Expected: FAIL с `ModuleNotFoundError` для `followup_state`.
 
-- [ ] **Step 3: Реализовать `FollowupStateAnalyzer`**
+- [x] **Step 3: Реализовать `FollowupStateAnalyzer`**
 
 Создать immutable helper без settings/env/IO. Сигнатуры:
 
@@ -119,11 +119,11 @@ Expected: FAIL с `ModuleNotFoundError` для `followup_state`.
 
 Перенести только pure-ветвления из `FollowupReviewRunner`; использовать существующие parsers, ограничение pending `[:50]` и UTF-8/NFC canonical IDs. В `parse_marker` централизованно канонизировать UUID author IDs, а opaque IDs — NFC без case-fold. Не читать `AI_REVIEW_*` внутри helper.
 
-- [ ] **Step 4: Перевести `FollowupReviewRunner` на helper**
+- [x] **Step 4: Перевести `FollowupReviewRunner` на helper**
 
 Создать `self.state = FollowupStateAnalyzer(self.author_id)` после чтения trusted ID. Сохранить private wrapper methods `_marker`, `_pending_comments`, `_pending`, `_continuations`, `_last_followup_requires_resolve`, делегирующие helper, чтобы не расширять diff остальных runner methods за пределы механической замены. В resolve-only ветке использовать `resolve_thread_ids` для выбора тех же unresolved original/continuation threads, сохранив существующую повторную загрузку перед mutation.
 
-- [ ] **Step 5: Запустить state и полный followup regression suites**
+- [x] **Step 5: Запустить state и полный followup regression suites**
 
 Run:
 
@@ -135,7 +135,7 @@ pytest -q ai_review/tests/suites/services/vcs/test_markers.py
 
 Expected: PASS; число и смысл существующих followup tests не изменены.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ai_review/services/review/followup_state.py ai_review/services/review/runner/followup.py ai_review/services/vcs/markers.py ai_review/tests/suites/services/review/test_followup_state.py ai_review/tests/suites/services/vcs/test_markers.py

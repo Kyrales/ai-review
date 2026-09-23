@@ -229,7 +229,14 @@ def _parse_v2(parts: list[str]) -> ReviewMarker | None:
 
 
 def parse_marker(body: str, author_id: str | int | None, trusted_author_id: str | int) -> ReviewMarker | None:
-    if str(author_id) != str(trusted_author_id):
+    def canonical_author(value: object) -> str:
+        normalized = unicodedata.normalize("NFC", str(value))
+        try:
+            return str(UUID(normalized))
+        except ValueError:
+            return normalized
+
+    if canonical_author(author_id) != canonical_author(trusted_author_id):
         return None
     matches = _MARKER.findall(body)
     if len(matches) != 1 or len(_MARKER_LIKE.findall(body)) != 1:
