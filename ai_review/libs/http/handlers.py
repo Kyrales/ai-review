@@ -33,16 +33,17 @@ def handle_http_error(client: str, exception: type[HTTPClientError]):
         @wraps(func)
         async def inner(*args, **kwargs):
             response = await func(*args, **kwargs)
-
+            sanitized_error: HTTPClientError | None = None
             try:
                 return response.raise_for_status()
             except HTTPStatusError as error:
-                raise exception(
+                sanitized_error = exception(
                     client=client,
                     details=f'{client} returned HTTP error',
                     status_code=error.response.status_code,
                     request_id=safe_request_id(error.response),
-                ) from error
+                )
+            raise sanitized_error
 
         return inner
 

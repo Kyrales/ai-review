@@ -172,3 +172,21 @@ def test_v2_model_requires_sorted_unique_covered_ids() -> None:
             origin="thread",
             publication="b" * 64,
         )
+
+
+def test_trusted_uuid_author_comparison_is_canonical() -> None:
+    marker = ReviewMarker(kind=MarkerKind.FINDING, head="a" * 40)
+
+    assert parse_marker(
+        render_marker(marker),
+        "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+        "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    ) == marker
+
+
+def test_opaque_author_comparison_normalizes_nfc_without_casefold() -> None:
+    marker = ReviewMarker(kind=MarkerKind.FINDING, head="a" * 40)
+    body = render_marker(marker)
+
+    assert parse_marker(body, "e\u0301", "é") == marker
+    assert parse_marker(body, "Owner", "owner") is None

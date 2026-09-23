@@ -1,7 +1,7 @@
 from ai_review.clients.gitflic.client import GitFlicHTTPClient
 from ai_review.libs.constants.vcs_provider import VCSProvider
-from ai_review.services.vcs.gitflic.adapter import to_review_comment, to_review_summary
-from ai_review.services.vcs.types import ReviewSummarySchema, ReviewThreadSchema, ThreadKind
+from ai_review.services.vcs.gitflic.adapter import to_review_summary, to_review_thread
+from ai_review.services.vcs.types import ReviewSummarySchema, ReviewThreadSchema
 
 
 class GitFlicKnowledgeSource:
@@ -21,14 +21,4 @@ class GitFlicKnowledgeSource:
 
     async def get_review_threads(self, review_id: str | int) -> list[ReviewThreadSchema]:
         discussions = await self.client.get_discussions(self.owner, self.project, int(review_id))
-        return [
-            ReviewThreadSchema(
-                id=item.uuid,
-                kind=ThreadKind.INLINE if item.newPath is not None and item.newLine is not None else ThreadKind.SUMMARY,
-                file=item.newPath,
-                line=item.newLine,
-                resolved=item.resolved,
-                comments=[to_review_comment(note, item.uuid, item) for note in [item, *item.replies]],
-            )
-            for item in discussions
-        ]
+        return [to_review_thread(item) for item in discussions]

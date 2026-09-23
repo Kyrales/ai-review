@@ -1,4 +1,5 @@
 import pytest
+from datetime import datetime, timezone
 from pydantic import ValidationError
 
 from ai_review.clients.gitflic.schema import (
@@ -7,12 +8,15 @@ from ai_review.clients.gitflic.schema import (
     GitFlicChange,
     GitFlicChangeLine,
     GitFlicMergeRequest,
+    GitFlicDiscussion,
+    GitFlicNote,
     GitFlicStatus,
 )
 from ai_review.services.vcs.gitflic.adapter import (
     find_position,
     to_review_info,
     to_review_summary,
+    to_review_thread,
 )
 from ai_review.services.vcs.types import ReviewSummarySchema
 
@@ -206,3 +210,23 @@ def test_review_summary_maps_provider_state(
 def test_review_summary_rejects_noncanonical_state() -> None:
     with pytest.raises(ValidationError):
         ReviewSummarySchema(id=41, source_branch="feature", state="pending")
+
+
+def test_to_review_thread_preserves_order_kind_and_resolution() -> None:
+    author = GitFlicAuthor(id="user")
+    created = datetime(2026, 9, 23, 10, tzinfo=timezone.utc)
+    root = GitFlicDiscussion(
+        uuid="thread", rawMessage="root", newPath="file.py", newLine=7,
+        oldPath="file.py", oldLine=7, author=author, createdAt=created,
+        resolved=True,
+        replies=[GitFlicNote(
+            uuid="reply", discussionUuid="thread", rawMessage="reply",
+            author=author, createdAt=created,
+        )],
+    )
+
+    result = to_review_thread(root)
+
+    assert result.kind.value == "INLINE"
+    assert result.resolved is True
+    assert [item.id for item in result.comments] == ["thread", "reply"]

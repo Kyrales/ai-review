@@ -3,6 +3,7 @@ import os
 from ai_review.clients.gitflic.schema import (
     GitFlicChange,
     GitFlicCreateDiscussion,
+    GitFlicDiscussion,
     GitFlicMergeRequest,
     GitFlicNote,
 )
@@ -10,8 +11,10 @@ from ai_review.services.vcs.types import (
     BranchRefSchema,
     ReviewCommentSchema,
     ReviewInfoSchema,
+    ReviewThreadSchema,
     ReviewSummarySchema,
     UserSchema,
+    ThreadKind,
 )
 
 
@@ -89,4 +92,19 @@ def to_review_comment(
         author=to_user(note.author.id, note.author.username, note.author.fullName),
         parent_id=note.discussionUuid,
         thread_id=thread_id,
+    )
+
+
+def to_review_thread(discussion: GitFlicDiscussion) -> ReviewThreadSchema:
+    inline = discussion.newPath is not None and discussion.newLine is not None
+    return ReviewThreadSchema(
+        id=discussion.uuid,
+        kind=ThreadKind.INLINE if inline else ThreadKind.SUMMARY,
+        file=discussion.newPath if inline else None,
+        line=discussion.newLine if inline else None,
+        comments=[
+            to_review_comment(note, discussion.uuid, discussion)
+            for note in (discussion, *discussion.replies)
+        ],
+        resolved=discussion.resolved,
     )

@@ -11,13 +11,14 @@ from ai_review.services.diff.one_c import (
     is_ignored_role_template_line,
 )
 from ai_review.services.git.types import GitServiceProtocol
-from ai_review.services.knowledge.block import parse_knowledge_block, render_knowledge_block
+from ai_review.services.knowledge.block import render_knowledge_block
 from ai_review.services.knowledge.extractor import KnowledgeExtractor
 from ai_review.services.knowledge.schema import (
     EligibleKnowledgeSource,
     KnowledgeExtractionContext,
 )
 from ai_review.services.review.gateway.types import ReviewLLMGatewayProtocol
+from ai_review.services.review.followup_state import FollowupStateAnalyzer
 from ai_review.services.review.internal.followup.schema import FollowupReply
 from ai_review.services.review.runner.followup_publication import (
     FollowupPublicationStateMachine,
@@ -59,6 +60,7 @@ class FollowupReviewRunner:
         self.parser = LLMOutputJSONParser(model=FollowupReply)
         self.author_id = os.environ.get("AI_REVIEW_GITFLIC_USER_ID", "")
         self.head = os.environ.get("AI_REVIEW_HEAD_SHA", "")
+        self.state = FollowupStateAnalyzer(self.author_id)
 
     @staticmethod
     def _canonical_id(value: object) -> str:
@@ -69,7 +71,7 @@ class FollowupReviewRunner:
             return normalized
 
     def _marker(self, comment: ReviewCommentSchema) -> ReviewMarker | None:
-        return parse_marker(comment.body, comment.author.id, self.author_id)
+        return self.state.marker(comment)
 
     def _trusted_usernames(self) -> set[str]:
         provider = str(getattr(self.vcs, "provider", settings.vcs.provider)).lower()
@@ -88,39 +90,14 @@ class FollowupReviewRunner:
         thread: ReviewThreadSchema,
         related_threads: tuple[ReviewThreadSchema, ...] = (),
     ) -> list[ReviewCommentSchema]:
-        covered: set[str] = set()
-        human: list[ReviewCommentSchema] = []
-        for comment in thread.comments:
-            marker = self._marker(comment)
-            if marker and marker.kind is MarkerKind.FOLLOWUP:
-                covered.update(self._canonical_id(item) for item in marker.covered)
-            elif comment.parent_id is not None:
-                human.append(comment)
-        origin = self._canonical_id(thread.id)
-        for related in related_threads:
-            for comment in related.comments:
-                marker = self._marker(comment)
-                if (
-                    marker is not None
-                    and marker.kind is MarkerKind.FOLLOWUP
-                    and marker.version == "v2"
-                    and marker.origin == origin
-                ):
-                    covered.update(self._canonical_id(item) for item in marker.covered)
-        return [
-            comment for comment in human
-            if self._canonical_id(comment.id) not in covered
-        ][:50]
+        return list(self.state.pending_comments(thread, related_threads))
 
     def _pending(
         self,
         thread: ReviewThreadSchema,
         related_threads: tuple[ReviewThreadSchema, ...] = (),
     ) -> list[str]:
-        return [
-            self._canonical_id(comment.id)
-            for comment in self._pending_comments(thread, related_threads)
-        ]
+        return list(self.state.pending_ids(thread, related_threads))
 
     def _human_reply_ids(self, thread: ReviewThreadSchema) -> set[str]:
         return {
@@ -134,29 +111,10 @@ class FollowupReviewRunner:
         thread: ReviewThreadSchema,
         related_threads: tuple[ReviewThreadSchema, ...],
     ) -> list[ReviewThreadSchema]:
-        origin = self._canonical_id(thread.id)
-        return [
-            related
-            for related in related_threads
-            if related.id != thread.id
-            and any(
-                (marker := self._marker(comment)) is not None
-                and marker.kind is MarkerKind.FOLLOWUP
-                and marker.version == "v2"
-                and marker.origin == origin
-                for comment in related.comments
-            )
-        ]
+        return list(self.state.continuations(thread, related_threads))
 
     def _last_followup_requires_resolve(self, thread: ReviewThreadSchema) -> bool:
-        for comment in reversed(thread.comments):
-            marker = parse_marker(comment.body, comment.author.id, self.author_id)
-            if marker and marker.kind is MarkerKind.FOLLOWUP:
-                return (
-                    marker.verdict in {"fixed", "withdrawn"}
-                    or parse_knowledge_block(comment.body) is not None
-                )
-        return False
+        return self.state.last_followup_requires_resolve(thread)
 
     async def _find_thread(
         self, thread_id: str | int, kind: ThreadKind
@@ -306,8 +264,9 @@ class FollowupReviewRunner:
         pending = [self._canonical_id(comment.id) for comment in pending_comments]
         human_reply_ids = self._human_reply_ids(thread)
         if not pending:
+            resolve_ids = set(self.state.resolve_thread_ids(thread, related_threads))
             for continuation in self._continuations(thread, related_threads):
-                if continuation.resolved is not True and isinstance(
+                if self._canonical_id(continuation.id) in resolve_ids and isinstance(
                     self.vcs, SupportsResolvableThreads
                 ):
                     await self.vcs.resolve_thread(continuation.id)
@@ -316,7 +275,7 @@ class FollowupReviewRunner:
             ):
                 await self.vcs.resolve_thread(thread.id)
                 return
-            if self._last_followup_requires_resolve(thread) and isinstance(
+            if self._canonical_id(thread.id) in resolve_ids and isinstance(
                 self.vcs, SupportsResolvableThreads
             ):
                 refreshed = await self._find_thread(thread.id, thread.kind)
