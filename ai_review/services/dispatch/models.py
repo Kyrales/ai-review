@@ -1,7 +1,8 @@
 from collections.abc import Sequence
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ai_review.services.review.followup_state import FollowupStateAnalyzer
 from ai_review.services.vcs.markers import MarkerKind
@@ -20,6 +21,53 @@ class DispatchDecision(BaseModel):
     mode: DispatchMode
     reason: str
     pending_count: int = Field(ge=0)
+
+
+class DispatchSelection(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    all_open: bool = False
+    merge_request_ids: tuple[int, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_ids(cls, values: object) -> object:
+        if not isinstance(values, dict):
+            return values
+        result = dict(values)
+        result["merge_request_ids"] = tuple(dict.fromkeys(result.get("merge_request_ids") or ()))
+        return result
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> "DispatchSelection":
+        if self.all_open == bool(self.merge_request_ids):
+            raise ValueError("select --all or one or more merge request IDs")
+        if len(self.merge_request_ids) > 10 or any(value <= 0 for value in self.merge_request_ids):
+            raise ValueError("merge request IDs must contain 1-10 positive unique values")
+        return self
+
+
+class DispatchItemResult(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    mr_id: int
+    mode: DispatchMode | None
+    outcome: Literal["started", "skipped", "failed"]
+    reason: str
+    pipeline_id: str | None = None
+
+
+class DispatchReport(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    status: Literal["success", "partial", "fatal"]
+    failure_scope: Literal["none", "item", "source", "security"]
+    error_code: str | None = None
+    selected_count: int
+    started_count: int
+    skipped_count: int
+    failed_count: int
+    items: tuple[DispatchItemResult, ...]
 
 
 def classify_dispatch(

@@ -347,7 +347,7 @@ git commit -m "feat: classify GitFlic dispatch state"
 - Consumes: `GitFlicHTTPClient`, `DispatchSelection`, `classify_dispatch`.
 - Produces: `GitFlicDispatchService.run(selection) -> DispatchReport`.
 
-- [ ] **Step 1: Написать failing service tests с fake gateway**
+- [x] **Step 1: Написать failing service tests с fake gateway**
 
 Определить `FakeGitFlicDispatchClient` с recorded calls и проверить:
 
@@ -366,7 +366,7 @@ git commit -m "feat: classify GitFlic dispatch state"
 - ambiguous POST error записывается один раз и не повторяется.
 - 429 на snapshot/protection даёт fatal zero POST; 429 одного MR до какого-либо POST даёт item failure с продолжением, а request-budget cap гарантирует, что собственный worst-case dispatcher не планирует более 433 HTTP attempts.
 
-- [ ] **Step 2: Запустить service tests и подтвердить RED**
+- [x] **Step 2: Запустить service tests и подтвердить RED**
 
 Run:
 
@@ -376,7 +376,7 @@ pytest -q ai_review/tests/suites/services/dispatch/test_service.py -k service
 
 Expected: FAIL на отсутствующих `DispatchSelection`, `DispatchReport`, `GitFlicDispatchService`.
 
-- [ ] **Step 3: Реализовать immutable selection/result models**
+- [x] **Step 3: Реализовать immutable selection/result models**
 
 Точные модели:
 
@@ -406,7 +406,7 @@ class DispatchReport(BaseModel):
 
 Before-validator `DispatchSelection` дедуплицирует IDs с сохранением порядка, затем требует XOR: `all_open` либо 1–10 положительных IDs.
 
-- [ ] **Step 4: Реализовать `GitFlicDispatchService`**
+- [x] **Step 4: Реализовать `GitFlicDispatchService`**
 
 Constructor принимает client, owner/project/control_ref/trusted_author_id. `run` выполняет:
 
@@ -419,7 +419,7 @@ Constructor принимает client, owner/project/control_ref/trusted_author_
 7. Создаёт exact `GitFlicPipelineStartRequest` и вызывает `start_pipeline` один раз.
 8. Локальная ошибка элемента становится failed со стабильным allowlisted `error_code`, без `str(error)`; цикл продолжается. Protection/snapshot/API preflight error даёт fatal report со scope `source|security` до POST.
 
-- [ ] **Step 5: Запустить service suite**
+- [x] **Step 5: Запустить service suite**
 
 Run:
 
@@ -429,7 +429,7 @@ pytest -q ai_review/tests/suites/services/dispatch/test_service.py
 
 Expected: PASS; recorded calls подтверждают отсутствие POST для `none` и отсутствие частичного POST при malformed all snapshot.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ai_review/services/dispatch/models.py ai_review/services/dispatch/service.py ai_review/tests/suites/services/dispatch/test_service.py
