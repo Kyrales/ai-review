@@ -14,6 +14,11 @@ def test_gitflic_image_contract() -> None:
     assert result.exit_code == 0
     assert "trusted GitFlic findings" in result.output
 
+    dispatch = CliRunner().invoke(app, ["gitflic-dispatch", "--help"])
+    assert dispatch.exit_code == 0
+    assert all(name in dispatch.output for name in ("--all", "--merge-request-id", "--control-ref"))
+    assert "token" not in dispatch.output.casefold()
+
 
 def test_image_uses_cli_entrypoint_in_mounted_source_directory() -> None:
     dockerfile = Path("Dockerfile").read_text(encoding="utf-8")

@@ -104,5 +104,36 @@ def sync_knowledge(
     if code:
         raise typer.Exit(code=int(code))
 
+
+@app.command("gitflic-dispatch")
+def gitflic_dispatch(
+    owner: str = typer.Option(..., "--owner"),
+    project: str = typer.Option(..., "--project"),
+    control_ref: str = typer.Option(..., "--control-ref"),
+    merge_request_id: list[int] | None = typer.Option(None, "--merge-request-id"),
+    all_open: bool = typer.Option(False, "--all"),
+    api_url: str = typer.Option("https://api.gitflic.ru", "--api-url"),
+):
+    """Start trusted AI review worker pipelines for selected GitFlic MRs."""
+    from pydantic import ValidationError
+    from ai_review.cli.commands.gitflic_dispatch import run_gitflic_dispatch_command
+    from ai_review.services.dispatch.models import DispatchSelection
+
+    ids = tuple(merge_request_id or ())
+    try:
+        DispatchSelection(all_open=all_open, merge_request_ids=ids)
+    except ValidationError as error:
+        raise typer.BadParameter("select --all or 1-10 positive merge request IDs") from error
+    code = asyncio.run(run_gitflic_dispatch_command(
+        owner=owner,
+        project=project,
+        control_ref=control_ref,
+        api_url=api_url,
+        merge_request_ids=ids,
+        all_open=all_open,
+    ))
+    if code:
+        raise typer.Exit(code=int(code))
+
 if __name__ == "__main__":
     app()

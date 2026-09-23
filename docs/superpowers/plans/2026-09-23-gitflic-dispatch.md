@@ -448,7 +448,7 @@ git commit -m "feat: orchestrate GitFlic AI dispatch"
 - Consumes: CLI options, environment secrets, `GitFlicDispatchService`.
 - Produces: JSON `DispatchReport` на stdout и единый exit mapping: success→`0`, partial item→`1`, usage/config→`2`, fatal source/security/preflight→`3`.
 
-- [ ] **Step 1: Написать failing CLI tests**
+- [x] **Step 1: Написать failing CLI tests**
 
 Через `CliRunner` и monkeypatched `build_runtime` проверить `--all`, repeated `--merge-request-id`, mutual exclusion, no selection, >10 unique IDs, duplicate IDs deduped в первом порядке, zero ID, invalid control ref/API URL. Проверить, что token options отсутствуют в `gitflic-dispatch --help`.
 
@@ -462,7 +462,7 @@ AI_REVIEW_GITFLIC_USER_ID=12345678-1234-4234-9234-123456789abc
 
 При отсутствии author ID fake `/user/me` задаёт canonical UUID; malformed ID даёт exit 2 до branch protection/POST. Успех печатает ровно один JSON object, error text не содержит token/response body.
 
-- [ ] **Step 2: Запустить CLI tests и подтвердить RED**
+- [x] **Step 2: Запустить CLI tests и подтвердить RED**
 
 Run:
 
@@ -472,7 +472,7 @@ pytest -q ai_review/tests/suites/cli/test_gitflic_dispatch.py
 
 Expected: FAIL: команда не зарегистрирована.
 
-- [ ] **Step 3: Реализовать runtime factory**
+- [x] **Step 3: Реализовать runtime factory**
 
 В `gitflic_dispatch.py` определить:
 
@@ -480,7 +480,7 @@ Expected: FAIL: команда не зарегистрирована.
 
 Factory валидирует HTTPS URL без credentials/query/fragment, обязательный primary token, optional distinct `AI_REVIEW_GITFLIC_TOKEN2`, trusted author env либо `/user/me`; создаёт `HTTPClientWithTokenConfig`/`GitFlicHTTPClient`, всегда закрывает client в `finally`, печатает `report.model_dump_json()`. Единственная parametrized таблица закрепляет mapping: success→0, partial/item→1, usage/config→2, fatal source/security/preflight→3.
 
-- [ ] **Step 4: Зарегистрировать Typer command**
+- [x] **Step 4: Зарегистрировать Typer command**
 
 Сигнатура в `main.py`:
 
@@ -488,11 +488,11 @@ Factory валидирует HTTPS URL без credentials/query/fragment, обя
 
 Полученный nonzero code преобразовать в `typer.Exit`; secrets не добавлять в signature.
 
-- [ ] **Step 5: Добавить image smoke contract**
+- [x] **Step 5: Добавить image smoke contract**
 
 В `test_image_smoke.py` вызвать `CliRunner().invoke(app, ["gitflic-dispatch", "--help"])`, потребовать exit 0 и options `--all`, `--merge-request-id`, `--control-ref`; убедиться, что `token` отсутствует в help.
 
-- [ ] **Step 6: Запустить CLI/image tests**
+- [x] **Step 6: Запустить CLI/image tests**
 
 Run:
 
@@ -503,7 +503,7 @@ pytest -q ai_review/tests/suites/image/test_image_smoke.py
 
 Expected: PASS.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add ai_review/cli/main.py ai_review/cli/commands/gitflic_dispatch.py ai_review/tests/suites/cli/test_gitflic_dispatch.py ai_review/tests/suites/image/test_image_smoke.py
