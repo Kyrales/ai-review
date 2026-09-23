@@ -846,6 +846,13 @@ Read-only API preview показывает exact snapshot и число actionab
 
 ## Self-Review Checklist
 
+### Implementation review
+
+- [x] Round 1 (`gpt-5.6-sol`, high): исправлены redaction exception chain,
+  strict pagination, legacy POST fallback, CLI URL/ref validation, explicit
+  closed-MR handling и недостающие regression matrices.
+- [ ] Round 2 (`gpt-5.6-sol`, high).
+
 - [ ] Каждое требование design spec связано с task/test.
 - [ ] В `sppr_gitflic` не создаются `.py` и не добавляется host Python requirement.
 - [ ] `FollowupReviewRunner` и dispatcher используют один `FollowupStateAnalyzer`.

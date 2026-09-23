@@ -124,10 +124,15 @@ class GitFlicHTTPClient(HTTPClient):
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
     async def _post(
-        self, url: str, *, json: dict[str, object] | None = None
+        self,
+        url: str,
+        *,
+        json: dict[str, object] | None = None,
+        allow_fallback: bool = True,
     ) -> Response:
         return await self._request(
-            "POST", url, json=json, extensions=NO_RETRY, allow_fallback=False
+            "POST", url, json=json, extensions=NO_RETRY,
+            allow_fallback=allow_fallback,
         )
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
@@ -139,6 +144,14 @@ class GitFlicHTTPClient(HTTPClient):
     ) -> GitFlicMergeRequest:
         response = await self._get(self._mr_path(owner, project, merge_request_id))
         return GitFlicMergeRequest.model_validate_json(response.text)
+
+    async def get_mr_strict(
+        self, owner: str, project: str, merge_request_id: int
+    ) -> GitFlicMergeRequest:
+        response = await self._get(self._mr_path(owner, project, merge_request_id))
+        result = self._validate_response(response, GitFlicMergeRequest, "merge_request")
+        assert isinstance(result, GitFlicMergeRequest)
+        return result
 
     async def list_open_mrs(
         self, owner: str, project: str
@@ -187,14 +200,18 @@ class GitFlicHTTPClient(HTTPClient):
     def _validate_response(
         cls, response: Response, model: type[BaseModel], endpoint_code: str
     ) -> BaseModel:
+        protocol_error: GitFlicProtocolError | None = None
         try:
-            return model.model_validate_json(response.content)
-        except (ValidationError, ValueError, UnicodeError) as error:
-            raise GitFlicProtocolError(
+            result = model.model_validate_json(response.content)
+        except (ValidationError, ValueError, UnicodeError):
+            protocol_error = GitFlicProtocolError(
                 endpoint_code=endpoint_code,
                 status_code=response.status_code,
                 request_id=cls._safe_request_id(response),
-            ) from error
+            )
+        if protocol_error is not None:
+            raise protocol_error
+        return result
 
     @staticmethod
     def _validate_page(
@@ -203,14 +220,19 @@ class GitFlicHTTPClient(HTTPClient):
         expected_number: int,
         previous_totals: tuple[int, int] | None,
         endpoint_code: str,
+        expected_size: int,
+        max_pages: int,
     ) -> tuple[int, int]:
         number = getattr(page, "number")
         total_pages = getattr(page, "totalPages")
         total_elements = getattr(page, "totalElements")
         if (
             number != expected_number
+            or getattr(page, "size") != expected_size
             or total_pages < 0
             or total_elements < 0
+            or total_pages > max_pages
+            or total_elements > expected_size * max_pages
             or (total_elements > 0 and total_pages == 0)
             or (total_pages and number >= total_pages)
         ):
@@ -227,6 +249,7 @@ class GitFlicHTTPClient(HTTPClient):
         items: list[GitFlicMergeRequest] = []
         totals: tuple[int, int] | None = None
         raw_count = 0
+        raw_ids: set[int] = set()
         for page_number in range(10):
             response = await self._get(path, params={"page": page_number, "size": 100})
             page = self._validate_response(response, GitFlicMergeRequestsPage, "merge_requests")
@@ -234,9 +257,16 @@ class GitFlicHTTPClient(HTTPClient):
             totals = self._validate_page(
                 page.page, expected_number=page_number,
                 previous_totals=totals, endpoint_code="merge_requests",
+                expected_size=100, max_pages=10,
             )
             raw = page.embedded.mergeRequestModelList
             raw_count += len(raw)
+            if raw_count > page.page.totalElements or raw_count > 1000:
+                raise GitFlicProtocolError("merge_requests", response.status_code)
+            for item in raw:
+                if item.localId in raw_ids:
+                    raise GitFlicProtocolError("merge_requests", response.status_code)
+                raw_ids.add(item.localId)
             if any(item.status is None for item in raw):
                 raise GitFlicProtocolError("merge_requests", response.status_code)
             items.extend(item for item in raw if item.status and item.status.id == "OPENED")
@@ -265,9 +295,12 @@ class GitFlicHTTPClient(HTTPClient):
             totals = self._validate_page(
                 page.page, expected_number=page_number,
                 previous_totals=totals, endpoint_code="discussions",
+                expected_size=100, max_pages=5,
             )
             envelopes = page.embedded.restDiscussionModelList
             raw_count += len(envelopes)
+            if raw_count > page.page.totalElements or raw_count > 500:
+                raise GitFlicProtocolError("discussions", response.status_code)
             results.extend(
                 GitFlicDiscussion(**item.rootNote.model_dump(), replies=item.replies)
                 for item in envelopes
@@ -291,6 +324,7 @@ class GitFlicHTTPClient(HTTPClient):
             totals = self._validate_page(
                 page.page, expected_number=page_number,
                 previous_totals=totals, endpoint_code="branch_protections",
+                expected_size=100, max_pages=10,
             )
             results.extend(page.embedded.branchProtectionApiModelList)
             if page_number + 1 >= page.page.totalPages:
@@ -309,7 +343,9 @@ class GitFlicHTTPClient(HTTPClient):
         request: GitFlicPipelineStartRequest,
     ) -> GitFlicPipelineStartResponse:
         path = f"/project/{quote(owner, safe='')}/{quote(project, safe='')}/cicd/pipeline/start"
-        response = await self._post(path, json=request.model_dump())
+        response = await self._post(
+            path, json=request.model_dump(), allow_fallback=False
+        )
         result = self._validate_response(response, GitFlicPipelineStartResponse, "pipeline_start")
         assert isinstance(result, GitFlicPipelineStartResponse)
         try:

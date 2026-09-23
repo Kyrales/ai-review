@@ -9,7 +9,7 @@ import typer
 from ai_review.clients.gitflic.client import GitFlicHTTPClient
 from ai_review.libs.config.http import HTTPClientWithTokenConfig
 from ai_review.services.dispatch.models import DispatchReport, DispatchSelection
-from ai_review.services.dispatch.service import GitFlicDispatchService
+from ai_review.services.dispatch.service import GitFlicDispatchService, is_safe_ref
 
 
 class DispatchExitCode(IntEnum):
@@ -31,10 +31,14 @@ def _validate_text(value: str) -> bool:
 
 
 def _validate_api_url(value: str) -> bool:
-    parsed = urlsplit(value)
+    try:
+        parsed = urlsplit(value)
+        hostname = parsed.hostname
+    except ValueError:
+        return False
     return (
         parsed.scheme == "https"
-        and bool(parsed.hostname)
+        and bool(hostname)
         and parsed.username is None
         and parsed.password is None
         and not parsed.query
@@ -64,6 +68,7 @@ async def run_gitflic_dispatch_command(
         not token
         or fallback == token
         or not all(_validate_text(value) for value in (owner, project, control_ref))
+        or not is_safe_ref(control_ref)
         or not _validate_api_url(api_url)
     ):
         typer.echo(_config_error().model_dump_json())

@@ -676,6 +676,56 @@ async def test_pipeline_start_is_never_retried_or_fallback_authenticated() -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [401, 403, 500, "timeout"])
+async def test_pipeline_start_failure_has_one_attempt(failure) -> None:
+    attempts = 0
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        if failure == "timeout":
+            raise httpx.ReadTimeout("ambiguous", request=request)
+        return httpx.Response(failure, request=request)
+
+    client = GitFlicHTTPClient(
+        transport=httpx.MockTransport(handler), fallback_token="reserve"
+    )
+    try:
+        with pytest.raises((GitFlicHTTPClientError, httpx.ReadTimeout)):
+            await client.start_pipeline(
+                "rt-vt", "sppr",
+                GitFlicPipelineStartRequest(refName="ai-review-control", variables=()),
+            )
+    finally:
+        await client.aclose()
+
+    assert attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_existing_discussion_post_keeps_fallback_compatibility() -> None:
+    tokens: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        tokens.append(request.headers["Authorization"])
+        if len(tokens) == 1:
+            return httpx.Response(403, request=request)
+        return httpx.Response(200, request=request, json=note("created"))
+
+    client = GitFlicHTTPClient(
+        transport=httpx.MockTransport(handler), fallback_token="reserve"
+    )
+    try:
+        await client.create_discussion(
+            "rt-vt", "sppr", 1, GitFlicCreateDiscussion(message="message")
+        )
+    finally:
+        await client.aclose()
+
+    assert tokens == ["token token", "token reserve"]
+
+
+@pytest.mark.asyncio
 async def test_pipeline_start_returns_stable_display_id() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, request=request, json={"localId": 3310})
@@ -728,4 +778,89 @@ async def test_malformed_dispatch_response_is_redacted() -> None:
         await client.aclose()
 
     assert secret not in str(caught.value)
+    assert caught.value.__cause__ is None
+    assert caught.value.__context__ is None
     assert caught.value.error_code == "invalid_response"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("malformation", ["negative_size", "duplicate_raw"])
+async def test_strict_merge_request_snapshot_rejects_malformed_pages(malformation) -> None:
+    items = [merge_request(1, "OPENED")]
+    size = 100
+    if malformation == "negative_size":
+        size = -1
+    else:
+        items.append(merge_request(1, "CLOSED"))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={
+            "_embedded": {"mergeRequestModelList": items},
+            "page": {"size": size, "totalElements": len(items), "totalPages": 1, "number": 0},
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicProtocolError):
+            await client.list_open_mrs_strict("rt-vt", "sppr")
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "page,items",
+    [
+        ({"size": 100, "totalElements": 1, "totalPages": 0, "number": 0}, [merge_request(1, "OPENED")]),
+        ({"size": 100, "totalElements": 1, "totalPages": 1, "number": 1}, [merge_request(1, "OPENED")]),
+        ({"size": 100, "totalElements": 2, "totalPages": 1, "number": 0}, [merge_request(1, "OPENED")]),
+        ({"size": 100, "totalElements": 1, "totalPages": 11, "number": 0}, [merge_request(1, "OPENED")]),
+        ({"size": 100, "totalElements": 1, "totalPages": 1, "number": 0}, [{**merge_request(1, "OPENED"), "status": None}]),
+    ],
+)
+async def test_strict_merge_request_snapshot_validates_page_invariants(page, items) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={
+            "_embedded": {"mergeRequestModelList": items}, "page": page,
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicProtocolError):
+            await client.list_open_mrs_strict("rt-vt", "sppr")
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_strict_discussions_reject_more_than_five_pages() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={
+            "_embedded": {"restDiscussionModelList": []},
+            "page": {"size": 100, "totalElements": 0, "totalPages": 6, "number": 0},
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicProtocolError):
+            await client.get_discussions_strict("rt-vt", "sppr", 1)
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_strict_merge_request_detail_redacts_invalid_response() -> None:
+    secret = "detail-canary"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={"localId": secret})
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicProtocolError) as caught:
+            await client.get_mr_strict("rt-vt", "sppr", 1)
+    finally:
+        await client.aclose()
+
+    assert secret not in str(caught.value)
+    assert caught.value.__context__ is None

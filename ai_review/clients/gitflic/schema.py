@@ -182,9 +182,21 @@ class GitFlicBranchProtectionsEmbedded(GitFlicModel):
     branchProtectionApiModelList: list[GitFlicBranchProtection]
 
 
+def empty_branch_protections_embedded() -> GitFlicBranchProtectionsEmbedded:
+    return GitFlicBranchProtectionsEmbedded(branchProtectionApiModelList=[])
+
+
 class GitFlicBranchProtectionsPage(GitFlicModel):
-    embedded: GitFlicBranchProtectionsEmbedded = Field(alias="_embedded")
+    embedded: GitFlicBranchProtectionsEmbedded = Field(
+        default_factory=empty_branch_protections_embedded, alias="_embedded"
+    )
     page: GitFlicPage
+
+    @model_validator(mode="after")
+    def require_embedded_for_nonempty_page(self) -> "GitFlicBranchProtectionsPage":
+        if self.page.totalElements and "embedded" not in self.model_fields_set:
+            raise ValueError("GitFlic omitted _embedded for nonempty branch protections")
+        return self
 
 
 class GitFlicPipelineVariable(GitFlicModel):

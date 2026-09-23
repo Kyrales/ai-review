@@ -40,12 +40,23 @@ def _matches(template: str, branch: str) -> bool:
     return re.fullmatch("".join(expression), branch) is not None
 
 
-def _safe_ref(value: str) -> bool:
+def is_safe_ref(value: str) -> bool:
+    components = value.split("/")
     return bool(value) and not (
         value.startswith("/")
         or value.endswith("/")
         or ".." in value
+        or "//" in value
+        or "@{" in value
         or "\\" in value
+        or any(char in value for char in " ~^:?*[")
+        or any(
+            not component
+            or component.startswith(".")
+            or component.endswith(".")
+            or component.endswith(".lock")
+            for component in components
+        )
         or any(ord(char) < 32 or ord(char) == 127 for char in value)
     )
 
@@ -110,8 +121,8 @@ class GitFlicDispatchService:
             and mr.status is not None
             and mr.status.id == "OPENED"
             and _HEAD.fullmatch(mr.sourceBranch.hash) is not None
-            and _safe_ref(mr.sourceBranch.id)
-            and _safe_ref(mr.targetBranch.id)
+            and is_safe_ref(mr.sourceBranch.id)
+            and is_safe_ref(mr.targetBranch.id)
         )
 
     async def run(self, selection: DispatchSelection) -> DispatchReport:
@@ -134,6 +145,12 @@ class GitFlicDispatchService:
         if not ids:
             return self._report([], 0)
 
+        if not is_safe_ref(self.control_ref):
+            return self._report(
+                [], len(ids), status="fatal", failure_scope="security",
+                error_code="unsafe_control_ref",
+            )
+
         try:
             protections = await self.client.list_branch_protections(self.owner, self.project)
         except Exception:
@@ -150,7 +167,15 @@ class GitFlicDispatchService:
         results: list[DispatchItemResult] = []
         for merge_request_id in ids:
             try:
-                first = await self.client.get_mr(self.owner, self.project, merge_request_id)
+                first = await self.client.get_mr_strict(self.owner, self.project, merge_request_id)
+                if not self._valid_mr(first, merge_request_id):
+                    if selection.all_open and first.status is not None and first.status.id != "OPENED":
+                        results.append(DispatchItemResult(
+                            mr_id=merge_request_id, mode=None, outcome="skipped",
+                            reason="closed_during_dispatch",
+                        ))
+                        continue
+                    raise ValueError("merge request state changed")
                 first_threads = await self._threads(merge_request_id)
                 decision = classify_dispatch(
                     first_threads, self.trusted_author_id, first.sourceBranch.hash
@@ -162,7 +187,7 @@ class GitFlicDispatchService:
                     ))
                     continue
 
-                current = await self.client.get_mr(self.owner, self.project, merge_request_id)
+                current = await self.client.get_mr_strict(self.owner, self.project, merge_request_id)
                 current_threads = await self._threads(merge_request_id)
                 if not self._valid_mr(current, merge_request_id):
                     if selection.all_open and current.status is not None and current.status.id != "OPENED":

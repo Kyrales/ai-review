@@ -99,7 +99,7 @@ async def test_service_all_sorts_snapshot_and_starts_actionable_mrs() -> None:
     client = AsyncMock()
     client.list_open_mrs_strict.return_value = (mr(2), mr(1))
     client.list_branch_protections.return_value = (safe_protection(),)
-    client.get_mr.side_effect = [mr(1), mr(1), mr(2), mr(2)]
+    client.get_mr_strict.side_effect = [mr(1), mr(1), mr(2), mr(2)]
     client.get_discussions_strict.return_value = ()
     client.start_pipeline.side_effect = [
         GitFlicPipelineStartResponse(localId=1001),
@@ -126,7 +126,7 @@ async def test_service_rejects_unsafe_overlapping_protection_before_post() -> No
     report = await service.run(DispatchSelection(merge_request_ids=(7,)))
 
     assert (report.status, report.failure_scope) == ("fatal", "security")
-    client.get_mr.assert_not_awaited()
+    client.get_mr_strict.assert_not_awaited()
     client.start_pipeline.assert_not_awaited()
 
 
@@ -134,7 +134,7 @@ async def test_service_rejects_unsafe_overlapping_protection_before_post() -> No
 async def test_service_rechecks_and_skips_when_current_summary_appears() -> None:
     client = AsyncMock()
     client.list_branch_protections.return_value = (safe_protection(),)
-    client.get_mr.side_effect = [mr(7), mr(7)]
+    client.get_mr_strict.side_effect = [mr(7), mr(7)]
     summary = thread(ThreadKind.SUMMARY, marked(MarkerKind.SUMMARY, status="complete"))
     client.get_discussions_strict.side_effect = [(), ()]
     service = GitFlicDispatchService(client, "owner", "project", "ai-review-control", TRUSTED)
@@ -146,7 +146,77 @@ async def test_service_rechecks_and_skips_when_current_summary_appears() -> None
     client.start_pipeline.assert_not_awaited()
 
 
+@pytest.mark.asyncio
+async def test_service_explicit_closed_mr_is_failed_even_with_terminal_summary() -> None:
+    client = AsyncMock()
+    client.list_branch_protections.return_value = (safe_protection(),)
+    client.get_mr_strict.return_value = mr(7, status="CLOSED")
+    summary = thread(ThreadKind.SUMMARY, marked(MarkerKind.SUMMARY, status="complete"))
+    service = GitFlicDispatchService(client, "owner", "project", "ai-review-control", TRUSTED)
+    service._threads = AsyncMock(return_value=(summary,))
+
+    report = await service.run(DispatchSelection(merge_request_ids=(7,)))
+
+    assert (report.status, report.items[0].outcome) == ("partial", "failed")
+    client.start_pipeline.assert_not_awaited()
+
+
 def test_dispatch_selection_deduplicates_before_limit() -> None:
     selection = DispatchSelection(merge_request_ids=(1, 2, 1, 2))
 
     assert selection.merge_request_ids == (1, 2)
+
+
+@pytest.mark.asyncio
+async def test_service_all_budget_and_empty_snapshot_are_preflight_only() -> None:
+    over = AsyncMock()
+    over.list_open_mrs_strict.return_value = tuple(mr(value) for value in range(1, 12))
+    empty = AsyncMock()
+    empty.list_open_mrs_strict.return_value = ()
+
+    over_report = await GitFlicDispatchService(
+        over, "owner", "project", "ai-review-control", TRUSTED
+    ).run(DispatchSelection(all_open=True))
+    empty_report = await GitFlicDispatchService(
+        empty, "owner", "project", "ai-review-control", TRUSTED
+    ).run(DispatchSelection(all_open=True))
+
+    assert over_report.error_code == "request_budget_exceeded"
+    assert empty_report.status == "success"
+    over.list_branch_protections.assert_not_awaited()
+    empty.list_branch_protections.assert_not_awaited()
+    over.start_pipeline.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_service_item_failure_continues_and_pipeline_body_is_exact() -> None:
+    client = AsyncMock()
+    client.list_branch_protections.return_value = (safe_protection(),)
+    client.get_mr_strict.side_effect = [RuntimeError("first"), mr(2), mr(2)]
+    client.get_discussions_strict.return_value = ()
+    client.start_pipeline.return_value = GitFlicPipelineStartResponse(localId=1002)
+
+    report = await GitFlicDispatchService(
+        client, "owner", "project", "ai-review-control", TRUSTED
+    ).run(DispatchSelection(merge_request_ids=(1, 2)))
+
+    assert (report.status, report.failed_count, report.started_count) == ("partial", 1, 1)
+    request = client.start_pipeline.await_args.args[2]
+    assert {item.key: item.value for item in request.variables} == {
+        "AI_REVIEW_REQUESTED": "true",
+        "AI_REVIEW_MODE": "initial",
+        "AI_REVIEW_MR_ID": "2",
+        "AI_REVIEW_HEAD_SHA": HEAD,
+        "AI_REVIEW_SOURCE_BRANCH": "feature/2",
+        "AI_REVIEW_TARGET_BRANCH": "main",
+    }
+
+
+def test_dispatch_selection_applies_limit_after_deduplication() -> None:
+    values = tuple(range(1, 11)) + tuple(range(1, 11))
+    assert len(DispatchSelection(merge_request_ids=values).merge_request_ids) == 10
+
+    with pytest.raises(ValueError):
+        DispatchSelection(merge_request_ids=tuple(range(1, 12)))
+    with pytest.raises(ValueError):
+        DispatchSelection(merge_request_ids=(0,))

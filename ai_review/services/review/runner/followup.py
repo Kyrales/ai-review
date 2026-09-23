@@ -264,8 +264,9 @@ class FollowupReviewRunner:
         pending = [self._canonical_id(comment.id) for comment in pending_comments]
         human_reply_ids = self._human_reply_ids(thread)
         if not pending:
+            resolve_ids = set(self.state.resolve_thread_ids(thread, related_threads))
             for continuation in self._continuations(thread, related_threads):
-                if continuation.resolved is not True and isinstance(
+                if self._canonical_id(continuation.id) in resolve_ids and isinstance(
                     self.vcs, SupportsResolvableThreads
                 ):
                     await self.vcs.resolve_thread(continuation.id)
@@ -274,7 +275,7 @@ class FollowupReviewRunner:
             ):
                 await self.vcs.resolve_thread(thread.id)
                 return
-            if self._last_followup_requires_resolve(thread) and isinstance(
+            if self._canonical_id(thread.id) in resolve_ids and isinstance(
                 self.vcs, SupportsResolvableThreads
             ):
                 refreshed = await self._find_thread(thread.id, thread.kind)
