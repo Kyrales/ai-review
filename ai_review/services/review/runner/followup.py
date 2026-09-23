@@ -11,7 +11,7 @@ from ai_review.services.diff.one_c import (
     is_ignored_role_template_line,
 )
 from ai_review.services.git.types import GitServiceProtocol
-from ai_review.services.knowledge.block import parse_knowledge_block, render_knowledge_block
+from ai_review.services.knowledge.block import render_knowledge_block
 from ai_review.services.knowledge.extractor import KnowledgeExtractor
 from ai_review.services.knowledge.schema import (
     EligibleKnowledgeSource,
