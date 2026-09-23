@@ -1,4 +1,5 @@
 import json
+import re
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -15,8 +16,9 @@ def test_gitflic_dispatch_help_exposes_no_secrets() -> None:
     result = runner.invoke(app, ["gitflic-dispatch", "--help"])
 
     assert result.exit_code == 0
-    assert all(name in result.output for name in ("--all", "--merge-request-id", "--control-ref"))
-    assert "token" not in result.output.casefold()
+    help_text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result.output)
+    assert all(name in help_text for name in ("--all", "--merge-request-id", "--control-ref"))
+    assert "token" not in help_text.casefold()
 
 
 def test_gitflic_dispatch_passes_deduplicated_ids(monkeypatch) -> None:

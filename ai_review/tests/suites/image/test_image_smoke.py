@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -16,8 +17,9 @@ def test_gitflic_image_contract() -> None:
 
     dispatch = CliRunner().invoke(app, ["gitflic-dispatch", "--help"])
     assert dispatch.exit_code == 0
-    assert all(name in dispatch.output for name in ("--all", "--merge-request-id", "--control-ref"))
-    assert "token" not in dispatch.output.casefold()
+    help_text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", dispatch.output)
+    assert all(name in help_text for name in ("--all", "--merge-request-id", "--control-ref"))
+    assert "token" not in help_text.casefold()
 
 
 def test_image_uses_cli_entrypoint_in_mounted_source_directory() -> None:
