@@ -259,7 +259,7 @@ git commit -m "feat: add GitFlic dispatch API"
 - Consumes: `GitFlicDiscussion`, `ReviewThreadSchema`, `FollowupStateAnalyzer`.
 - Produces: `to_review_thread`, `DispatchMode`, `DispatchDecision`, `classify_dispatch`.
 
-- [ ] **Step 1: Написать failing adapter и classifier tests**
+- [x] **Step 1: Написать failing adapter и classifier tests**
 
 Проверить преобразование general/inline discussion, `resolved`, порядок root/replies и IDs. Таблица classifier cases должна содержать:
 
@@ -281,7 +281,7 @@ damaged knowledge unresolved            -> none
 resolved terminal followup              -> none
 ```
 
-- [ ] **Step 2: Запустить tests и подтвердить RED**
+- [x] **Step 2: Запустить tests и подтвердить RED**
 
 Run:
 
@@ -292,11 +292,11 @@ pytest -q ai_review/tests/suites/services/dispatch/test_service.py -k classify
 
 Expected: FAIL на отсутствующих `to_review_thread`/`classify_dispatch`.
 
-- [ ] **Step 3: Вынести public `to_review_thread`**
+- [x] **Step 3: Вынести public `to_review_thread`**
 
 Перенести тело `GitFlicVCSClient._thread` в adapter function `to_review_thread(discussion: GitFlicDiscussion) -> ReviewThreadSchema`; существующий client и `GitFlicKnowledgeSource.get_review_threads` вызывают её и не меняют внешний VCS/knowledge behavior. Parity test подаёт одну discussion в оба пути и сравнивает одинаковые `model_dump()`.
 
-- [ ] **Step 4: Добавить dispatch models и pure classifier**
+- [x] **Step 4: Добавить dispatch models и pure classifier**
 
 В `models.py` определить frozen/extra-forbid модели:
 
@@ -318,7 +318,7 @@ class DispatchDecision(BaseModel):
 
 Сначала для исторических и текущих trusted started threads проверить через `FollowupStateAnalyzer` pending replies и `resolve_thread_ids`; это даёт `followup` независимо от marker head. Если followup не требуется, trusted terminal summary в `ThreadKind.SUMMARY` с `marker.head == current_head` даёт `none`. Иначе вернуть `initial`: сюда входят новый head, stale markers и current-head finding без terminal summary, который worker завершит через existing partial-recovery path. Finding учитывается только в `ThreadKind.INLINE`, summary — только в `ThreadKind.SUMMARY`.
 
-- [ ] **Step 5: Запустить adapter/classifier и VCS regression tests**
+- [x] **Step 5: Запустить adapter/classifier и VCS regression tests**
 
 Run:
 
@@ -329,7 +329,7 @@ pytest -q ai_review/tests/suites/services/dispatch/test_service.py -k classify
 
 Expected: PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ai_review/services/vcs/gitflic/adapter.py ai_review/services/vcs/gitflic/client.py ai_review/services/knowledge/gitflic_source.py ai_review/services/dispatch ai_review/tests/suites/services/vcs/gitflic/test_adapter.py ai_review/tests/suites/services/knowledge/test_source.py ai_review/tests/suites/services/dispatch/test_service.py

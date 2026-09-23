@@ -12,12 +12,12 @@ from ai_review.services.vcs.gitflic.adapter import (
     find_position,
     to_review_comment,
     to_review_info,
+    to_review_thread,
 )
 from ai_review.services.vcs.types import (
     ReviewCommentSchema,
     ReviewInfoSchema,
     ReviewThreadSchema,
-    ThreadKind,
     VCSClientProtocol,
 )
 
@@ -135,15 +135,7 @@ class GitFlicVCSClient(VCSClientProtocol):
 
     @classmethod
     def _thread(cls, discussion: GitFlicDiscussion) -> ReviewThreadSchema:
-        inline = discussion.newPath is not None and discussion.newLine is not None
-        return ReviewThreadSchema(
-            id=discussion.uuid,
-            kind=ThreadKind.INLINE if inline else ThreadKind.SUMMARY,
-            file=discussion.newPath if inline else None,
-            line=discussion.newLine if inline else None,
-            comments=cls._comments(discussion),
-            resolved=discussion.resolved,
-        )
+        return to_review_thread(discussion)
 
     async def get_inline_threads(self) -> list[ReviewThreadSchema]:
         return [
