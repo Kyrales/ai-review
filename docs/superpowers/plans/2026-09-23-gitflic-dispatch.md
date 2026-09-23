@@ -16,7 +16,7 @@
 - Рабочая ветка `ai_review` — `feature/gitflic-dispatch`; интеграционная ветка `sppr_gitflic` — `ai-review-control`.
 - Новая CLI-команда называется `gitflic-dispatch`; существующие команды и worker variables не меняются.
 - Секреты принимаются только через environment; CLI options и JSON summary секретов не содержат.
-- `AI_REVIEW_MR_IDS` отсутствует — dispatcher job отсутствует; пусто/`all` — все `OPENED`; CSV — 1–10 уникальных положительных ID.
+- `AI_REVIEW_MR_IDS` отсутствует — dispatcher job отсутствует; `all` — все `OPENED`; CSV — 1–10 уникальных положительных ID. Текущий GitFlic отклоняет явно пустое значение с HTTP 422, поэтому оно не является операторским alias; launcher обрабатывает пустую строку как `all` только защитно.
 - Массовый snapshot получает до 10 страниц по 100 MR, полностью валидируется до первого POST и fail-fast отклоняет больше 10 открытых MR согласно worst-case request budget лимита GitFlic 500/hour.
 - Pipeline POST выполняется один раз без transport/fallback retry; GET сохраняет существующий bounded retry и fallback token только после 401/403.
 - API redirect запрещён; response body и произвольные headers не включаются в ошибки.
@@ -31,7 +31,7 @@
 - 5xx/timeout pipeline POST не должен повторяться, даже если GET retry включён.
 - Поздняя malformed-страница `--all` не должна дать частичный запуск уже найденных MR.
 - V2 continuation marker должен покрывать reply исходной дискуссии так же в dispatcher и worker.
-- Явно пустая GitFlic variable должна создавать dispatcher job, а отсутствующая — нет; это проверяется live contract smoke.
+- Отсутствующая GitFlic variable не должна создавать dispatcher job; `all` должен создавать его. Невозможность создать явно пустую variable подтверждается live contract probe (HTTP 422).
 - Stale/current-head markers должны приводить к тому же initial recovery, followup или none, что существующий worker lifecycle.
 
 ---
@@ -570,7 +570,7 @@ git add docs/cli/README.md docs/ci/README.md README.md .github/workflows/workflo
 git commit -m "docs: describe GitFlic dispatch rollout"
 ```
 
-- [ ] **Step 7: Merge/publish и зафиксировать digest**
+- [x] **Step 7: Merge/publish и зафиксировать digest**
 
 После review/merge `feature/gitflic-dispatch` дождаться green `workflow-publish.yml`. Скопировать полный `published_ref` из output в stdin следующего скрипта; он принимает только exact digest, проверяет cosign issuer/identity и запускает help на Linux:
 
@@ -589,6 +589,11 @@ docker run --rm --read-only --cap-drop=ALL --security-opt=no-new-privileges \
 
 Expected: pull по immutable digest и help exit 0. Сохранить полный `published_ref` в описании интеграционного изменения `sppr_gitflic`; не подставлять `latest`.
 
+Выполнено: изменения слиты в `ai_review/main`; publish workflow
+`https://github.com/Kyrales/ai-review/actions/runs/35835677303` завершён успешно.
+Опубликованный и проверенный digest:
+`ghcr.io/kyrales/ai-review@sha256:d543431814526724f234232e4e0aa00fce79221822763be0b58f9635021189f8`.
+
 ### Task 7: Добавить тонкий launcher в `sppr_gitflic`
 
 **Files:**
@@ -600,7 +605,7 @@ Expected: pull по immutable digest и help exit 0. Сохранить полн
 - Consumes: `AI_REVIEW_MR_IDS`, CI ref/tag, env-file secrets, exact published image digest.
 - Produces: hardened invocation `ai-review gitflic-dispatch`; host dependencies только Bash/Docker/Cosign flow, без Python/PowerShell.
 
-- [ ] **Step 1: Добавить fake docker/cosign failing tests**
+- [x] **Step 1: Добавить fake docker/cosign failing tests**
 
 Harness записывает argv и список переданных env names без значений. Cases:
 
@@ -613,7 +618,7 @@ Harness записывает argv и список переданных env names
 - docker flags содержат read-only/cap-drop/no-new-privileges/user/tmpfs и не содержат Docker socket/project mount;
 - token values отсутствуют в argv/stdout/stderr.
 
-- [ ] **Step 2: Запустить launcher test и подтвердить RED**
+- [x] **Step 2: Запустить launcher test и подтвердить RED**
 
 Run из `../sppr_gitflic`:
 
@@ -623,7 +628,7 @@ bash tools/ai-review/tests/test-dispatch-ai-review.sh
 
 Expected: FAIL, launcher отсутствует.
 
-- [ ] **Step 3: Реализовать pre-secret gate**
+- [x] **Step 3: Реализовать pre-secret gate**
 
 Начало script:
 
@@ -638,7 +643,7 @@ umask 077
 
 До source env построить Bash array `selection_args`: пусто/точное `all` → `(--all)`; CSV regex → dedupe 1–10 и repeated arguments. Только затем source readable `SPPR_CI_ENV_FILE` и require primary token.
 
-- [ ] **Step 4: Реализовать pinned/cosign verified hardened launch**
+- [x] **Step 4: Реализовать pinned/cosign verified hardened launch**
 
 Вставить exact digest, полученный в Task 6, константой `dispatch_image`. Pull по digest; проверить cosign теми же pinned verifier image, issuer и workflow identity, что `run-ai-review.sh`. Запустить container без mounts/socket, передавая только имена environment variables:
 
@@ -656,7 +661,7 @@ docker run --rm --pull=never --read-only --cap-drop=ALL \
 
 Обернуть container command в `timeout --signal=TERM --kill-after=30s 840s`; job получает `timeout: 15m`. Не включать token values в command line. Не публиковать artifacts. Fake docker test имитирует timeout/exit 124 и подтверждает ненулевой итог без печати env values.
 
-- [ ] **Step 5: Запустить launcher tests/syntax**
+- [x] **Step 5: Запустить launcher tests/syntax**
 
 Run:
 
@@ -667,7 +672,7 @@ bash tools/ai-review/tests/test-dispatch-ai-review.sh
 
 Expected: PASS; fake log не содержит secrets и host Python invocation.
 
-- [ ] **Step 6: Commit launcher**
+- [x] **Step 6: Commit launcher**
 
 ```bash
 git add tools/ai-review/dispatch-ai-review.sh tools/ai-review/tests/test-dispatch-ai-review.sh
@@ -686,11 +691,11 @@ git commit -m "feat: launch GitFlic AI dispatch container"
 - Consumes: ручной pipeline на `ai-review-control` с явно добавленной `AI_REVIEW_MR_IDS`.
 - Produces: только job `ai_review_dispatch`; child содержит существующий `ai_review`, но не dispatcher.
 
-- [ ] **Step 1: До mutation-capable job проверить GitFlic empty/unset semantics**
+- [x] **Step 1: До mutation-capable job проверить GitFlic empty/unset semantics**
 
-В отдельном временном commit ветки `ai-review-control` добавить no-secret/no-POST probe job с тем же rule `$AI_REVIEW_MR_IDS != null`, script только печатает фиксированное `dispatch-contract-probe`. Через UI создать два pipeline: без variable и с явно добавленной пустой variable. Требование: в первом probe отсутствует, во втором присутствует. Затем удалить probe тем же revert/следующим commit до добавления launcher job. Если поведение иное, остановить Task 8 и пересмотреть activation contract/spec; не подключать настоящий dispatcher и не ослаблять требование пустого alias.
+В отдельном временном commit ветки `ai-review-control` был добавлен no-secret/no-POST probe job с rule `$AI_REVIEW_MR_IDS != null`. Pipelines 827/828 без variable содержали zero jobs. GitFlic API отклонил создание pipeline с явно пустой variable: HTTP 422, `variables[0].value: error.field.empty`. Поэтому activation contract пересмотрен: отсутствующая variable не создаёт job, поддерживаемый массовый selector — `all`; launcher-side empty parsing сохранён только как defensive behavior. Probe заменён реальным job последующим commit.
 
-- [ ] **Step 2: Добавить failing YAML contract assertions**
+- [x] **Step 2: Добавить failing YAML contract assertions**
 
 Проверить block:
 
@@ -709,7 +714,7 @@ bash tools/ai-review/dispatch-ai-review.sh
 
 Запретить `allow_failure`, artifacts, inline implementation, Python и PowerShell в job. Проверить, что worker POST contract не содержит `AI_REVIEW_MR_IDS`.
 
-- [ ] **Step 3: Запустить contracts и подтвердить RED**
+- [x] **Step 3: Запустить contracts и подтвердить RED**
 
 Run:
 
@@ -720,7 +725,7 @@ pwsh -NoProfile -File tools/ai-review/tests/test-ci-contract.ps1
 
 Expected: FAIL на отсутствующем job.
 
-- [ ] **Step 4: Добавить `ai_review_dispatch` и before-script guard**
+- [x] **Step 4: Добавить `ai_review_dispatch` и before-script guard**
 
 Job rule:
 
@@ -731,7 +736,7 @@ rules:
 
 Job-local `AI_REVIEW_DISPATCH_JOB=true`, `timeout: 15m`; global env source пропускается одновременно для worker и dispatcher, чтобы launcher сам прочитал secrets только после runtime gate. Обычные jobs на `ai-review-control` и child worker правила не расширять.
 
-- [ ] **Step 5: Зарегистрировать launcher test и прогнать contracts**
+- [x] **Step 5: Зарегистрировать launcher test и прогнать contracts**
 
 Run:
 
@@ -741,9 +746,9 @@ bash tools/ci/tests/test-gitflic-ci.sh
 pwsh -NoProfile -File tools/ai-review/tests/test-ci-contract.ps1
 ```
 
-Expected: PASS; отсутствующая variable не создаёт job, explicit empty остаётся допустимой по expression contract.
+Expected: PASS; отсутствующая variable не создаёт job, `all` и CSV создают dispatcher. Explicit empty нельзя задать через текущий GitFlic UI/API (HTTP 422).
 
-- [ ] **Step 6: Commit CI adapter**
+- [x] **Step 6: Commit CI adapter**
 
 ```bash
 git add gitflic-ci_linux.yaml tools/ai-review/tests/test-ci-contract.ps1 tools/ci/tests/test-gitflic-ci.sh tools/ci/tests/README.md
@@ -761,15 +766,15 @@ git commit -m "ci: dispatch selected AI reviews from GitFlic"
 - Consumes: готовый двухрепозиторный runtime contract.
 - Produces: инструкция GitFlic UI и явное сохранение локальных PowerShell flows.
 
-- [ ] **Step 1: Добавить failing documentation assertions**
+- [x] **Step 1: Добавить failing documentation assertions**
 
-Потребовать строки `AI_REVIEW_MR_IDS=79,81,84`, `AI_REVIEW_MR_IDS=all`, `AI_REVIEW_MR_IDS=` и формулировки: no host Python; `Start-AiReview.ps1` и `Sync-AiReviewKnowledge.ps1` остаются независимыми локальными инструментами.
+Потребовать строки `AI_REVIEW_MR_IDS=79,81,84`, `AI_REVIEW_MR_IDS=all` и явное описание отклонения пустого значения текущим GitFlic; также формулировки: no host Python; `Start-AiReview.ps1` и `Sync-AiReviewKnowledge.ps1` остаются независимыми локальными инструментами.
 
-- [ ] **Step 2: Обновить design и operator README**
+- [x] **Step 2: Обновить design и operator README**
 
 Описать UI steps, selector semantics, `none`, partial failure, pinned signed container, отсутствие PowerShell/Python в Linux job, риск большой очереди при `all` и необходимость нового dispatch вместо Restart после изменения head.
 
-- [ ] **Step 3: Запустить docs contract**
+- [x] **Step 3: Запустить docs contract**
 
 Run:
 
@@ -779,7 +784,7 @@ bash tools/ci/tests/test-gitflic-ci.sh
 
 Expected: PASS.
 
-- [ ] **Step 4: Commit docs**
+- [x] **Step 4: Commit docs**
 
 ```bash
 git add tools/ci/README.md doc/specs/24_ai_review_gitflic_design.md tools/ci/tests/test-gitflic-ci.sh
@@ -796,7 +801,7 @@ git commit -m "docs: describe containerized GitFlic dispatch"
 - Consumes: опубликованный signed digest и изменения обоих repositories.
 - Produces: branch-ready интеграция и live evidence без секретов.
 
-- [ ] **Step 1: Проверить `ai_review`**
+- [x] **Step 1: Проверить `ai_review`**
 
 Run:
 
@@ -807,7 +812,7 @@ pytest -q
 
 Expected: PASS.
 
-- [ ] **Step 2: Проверить `sppr_gitflic` static/contract suites**
+- [x] **Step 2: Проверить `sppr_gitflic` static/contract suites**
 
 Run:
 
@@ -824,11 +829,11 @@ git diff --exit-code "$(git merge-base origin/ai-review-control HEAD)..HEAD" -- 
 
 Expected: PASS и zero diff для старого PowerShell runtime.
 
-- [ ] **Step 3: Проверить EDT state**
+- [x] **Step 3: Проверить EDT state**
 
 Вызвать доступный `edt-mcp.get_problem_summary(projectName: "sppr")` либо ближайший опубликованный summary tool. Expected: CI/docs изменения не добавили EDT errors; исходные unrelated problems перечислены отдельно.
 
-- [ ] **Step 4: Проверить image digest на Linux runner read-only**
+- [x] **Step 4: Проверить image digest на Linux runner read-only**
 
 Pull/verify exact digest и выполнить `gitflic-dispatch --help` hardened-командой из Task 6. Expected: exit 0; `python3` на host не вызывается и не добавляется в runner requirements.
 
@@ -836,9 +841,9 @@ Pull/verify exact digest и выполнить `gitflic-dispatch --help` hardene
 
 До внешней мутации показать пользователю exact MR ID, ожидаемый mode и image digest. После подтверждения создать pipeline, указав в `AI_REVIEW_MR_IDS` ровно показанный десятичный ID. Expected: dispatcher SUCCESS, один worker только для actionable MR, current head, отсутствие secrets/artifacts.
 
-- [ ] **Step 6: Проверить empty/all UI contract с отдельным подтверждением**
+- [ ] **Step 6: Проверить `all` UI contract с отдельным подтверждением**
 
-Read-only API preview показывает exact snapshot и число actionable MR. После отдельного подтверждения выполнить контролируемые pipelines с `AI_REVIEW_MR_IDS=all` и с явно добавленной пустой variable. Expected: один и тот же snapshot; `none` не создаёт workers. Любое расхождение блокирует завершение rollout и требует исправления activation contract.
+Read-only API preview показывает exact snapshot и число actionable MR. После отдельного подтверждения выполнить контролируемый pipeline с `AI_REVIEW_MR_IDS=all`. Expected: dispatcher использует показанный snapshot; `none` не создаёт workers. Explicit empty отдельно не запускается: GitFlic отклоняет такую variable с HTTP 422, что уже зафиксировано в Step 1 Task 8.
 
 - [ ] **Step 7: Зафиксировать безопасный evidence**
 
@@ -855,11 +860,16 @@ Read-only API preview показывает exact snapshot и число actionab
   математические/cardinality-инварианты pagination, sanitized HTTP exception
   graph; aliases и classifier matrix дополнительно усилены.
 
-- [ ] Каждое требование design spec связано с task/test.
-- [ ] В `sppr_gitflic` не создаются `.py` и не добавляется host Python requirement.
-- [ ] `FollowupReviewRunner` и dispatcher используют один `FollowupStateAnalyzer`.
-- [ ] GET redirect forbidden, POST start no-retry и error redaction закреплены tests.
-- [ ] Selector absent/empty/all/CSV имеет отдельные contract tests.
-- [ ] Image publish предшествует pin digest и интеграции `sppr_gitflic`.
-- [ ] Existing CLI/worker/PowerShell flows имеют regression tests.
-- [ ] В плане отсутствуют плейсхолдеры, неназванные error cases и неразрешённые интерфейсы.
+### Integration review (`sppr_gitflic`)
+
+- [x] Round 1 (`gpt-5.6-sol`, high): Critical/Important отсутствуют; minor по отдельным assertions параметров Cosign отложен, production command проверен.
+- [x] Round 2 (`gpt-5.6-sol`, high): Critical/Important отсутствуют, verdict `Ready`; повторно отмечен тот же minor по отдельным assertions параметров Cosign, production command и подпись проверены.
+
+- [x] Каждое требование design spec связано с task/test.
+- [x] В `sppr_gitflic` не создаются `.py` и не добавляется host Python requirement.
+- [x] `FollowupReviewRunner` и dispatcher используют один `FollowupStateAnalyzer`.
+- [x] GET redirect forbidden, POST start no-retry и error redaction закреплены tests.
+- [x] Selector absent/defensive-empty/all/CSV имеет отдельные contract tests; GitFlic explicit empty дополнительно проверен live probe и отклоняется HTTP 422.
+- [x] Image publish предшествует pin digest и интеграции `sppr_gitflic`.
+- [x] Existing CLI/worker/PowerShell flows имеют regression tests.
+- [x] В плане отсутствуют плейсхолдеры, неназванные error cases и неразрешённые интерфейсы.

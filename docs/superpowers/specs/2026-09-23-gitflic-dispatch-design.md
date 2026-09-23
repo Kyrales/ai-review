@@ -8,7 +8,7 @@
 
 - `AI_REVIEW_MR_IDS=79,81,84` — обработать явный список;
 - `AI_REVIEW_MR_IDS=all` — обработать все открытые MR;
-- явно добавленная пустая `AI_REVIEW_MR_IDS` — то же, что `all`;
+- явно пустую `AI_REVIEW_MR_IDS` текущий GitFlic создать не позволяет (HTTP 422); внутри Bash launcher пустая строка всё равно защитно трактуется как `all`;
 - отсутствующая `AI_REVIEW_MR_IDS` — обычный pipeline, dispatcher job не создаётся.
 
 ## Решение
@@ -19,7 +19,7 @@
 
 ```text
 GitFlic Create Pipeline
-  ref=ai-review-control, AI_REVIEW_MR_IDS=79,81,84 | all | empty
+  ref=ai-review-control, AI_REVIEW_MR_IDS=79,81,84 | all
       |
       v
 sppr: ai_review_dispatch + thin Bash gate
@@ -47,7 +47,7 @@ sppr: ai_review worker (unchanged contract)
 
 ### `sppr_gitflic`
 
-- GitFlic rule, отличающее отсутствующую переменную от явно пустой.
+- GitFlic rule, создающее job только при наличии переменной; массовый запуск использует значение `all`.
 - Проверка `ai-review-control`, запрет tag и проверка selector до чтения env-файла.
 - Преобразование selector: пусто/`all` в `--all`, CSV в повторяемые `--merge-request-id`.
 - Pull и cosign-проверка закреплённого digest, hardened `docker run` без Docker socket и mounts проекта.
@@ -114,7 +114,7 @@ POST `/cicd/pipeline/start` не повторяется ни transport retry, н
 2. Собрать Windows release согласно `AGENTS.md`, проверить `ai-review.exe --help`; Linux binary и container проверяет Linux CI.
 3. Merge/publish подписанный container image, получить точный digest и проверить наличие `gitflic-dispatch --help` по digest.
 4. Только после этого внести digest, Bash launcher и job в `sppr_gitflic:ai-review-control`.
-5. До подключения mutation-capable launcher отдельным no-secret/no-POST CI probe подтвердить, что GitFlic отличает отсутствующую variable от явно пустой. Если нет — остановить rollout и пересмотреть activation contract; пустой alias нельзя молча объявить неподдержанным.
+5. До подключения mutation-capable launcher отдельным no-secret/no-POST CI probe проверить absent/empty contract. Проверка выполнена: pipelines без variable не содержат job, а явно пустую variable GitFlic API отклоняет с HTTP 422. Поэтому документированный массовый selector — `all`; launcher-side empty parsing остаётся защитным.
 6. Сначала провести fake/contract tests, затем с отдельного согласия — live smoke одного MR и контролируемый `all`.
 
 ## Не входит в эту итерацию
