@@ -5,8 +5,16 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from ai_review.clients.gitflic.client import GitFlicHTTPClient, GitFlicHTTPClientError
-from ai_review.clients.gitflic.schema import GitFlicCreateDiscussion
+from ai_review.clients.gitflic.client import (
+    GitFlicHTTPClient,
+    GitFlicHTTPClientError,
+    GitFlicProtocolError,
+)
+from ai_review.clients.gitflic.schema import (
+    GitFlicCreateDiscussion,
+    GitFlicPipelineStartRequest,
+    GitFlicPipelineVariable,
+)
 from ai_review.libs.constants.vcs_provider import VCSProvider
 
 
@@ -616,3 +624,108 @@ async def test_inline_discussion_sends_positive_old_line_for_added_file() -> Non
         b'{"newLine":12,"oldLine":12,"newPath":"new.py",'
         b'"oldPath":"/dev/null","message":"Inline"}'
     )
+
+
+@pytest.mark.asyncio
+async def test_list_branch_protections_reads_documented_endpoint() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.raw_path.split(b"?", 1)[0] == (
+            b"/project/owner%20name/repo%2Fname/branch-protection"
+        )
+        return httpx.Response(200, request=request, json={
+            "_embedded": {"branchProtectionApiModelList": [{
+                "branchTemplate": "ai-review-control",
+                "allowedToPush": "ADMINS",
+                "allowForcePush": False,
+            }]},
+            "page": {"size": 100, "totalElements": 1, "totalPages": 1, "number": 0},
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        protections = await client.list_branch_protections("owner name", "repo/name")
+    finally:
+        await client.aclose()
+
+    assert protections[0].branchTemplate == "ai-review-control"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_start_is_never_retried_or_fallback_authenticated() -> None:
+    requests: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(403, request=request)
+
+    client = GitFlicHTTPClient(
+        transport=httpx.MockTransport(handler), fallback_token="reserve"
+    )
+    request = GitFlicPipelineStartRequest(
+        refName="ai-review-control",
+        variables=(GitFlicPipelineVariable(key="AI_REVIEW_REQUESTED", value="true"),),
+    )
+    try:
+        with pytest.raises(GitFlicHTTPClientError):
+            await client.start_pipeline("rt-vt", "sppr", request)
+    finally:
+        await client.aclose()
+
+    assert len(requests) == 1
+    assert requests[0].headers["Authorization"] == "token token"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_start_returns_stable_display_id() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={"localId": 3310})
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        response = await client.start_pipeline(
+            "rt-vt", "sppr",
+            GitFlicPipelineStartRequest(refName="ai-review-control", variables=()),
+        )
+    finally:
+        await client.aclose()
+
+    assert response.display_id == "3310"
+
+
+@pytest.mark.asyncio
+async def test_get_redirect_is_not_followed() -> None:
+    paths: list[str] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(302, request=request, headers={"Location": "https://attacker.invalid/"})
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicHTTPClientError):
+            await client.get_mr("rt-vt", "sppr", 1)
+    finally:
+        await client.aclose()
+
+    assert paths == ["/project/rt-vt/sppr/merge-request/1"]
+
+
+@pytest.mark.asyncio
+async def test_malformed_dispatch_response_is_redacted() -> None:
+    secret = "canary-must-not-leak"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={"localId": secret})
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicProtocolError) as caught:
+            await client.start_pipeline(
+                "rt-vt", "sppr",
+                GitFlicPipelineStartRequest(refName="ai-review-control", variables=()),
+            )
+    finally:
+        await client.aclose()
+
+    assert secret not in str(caught.value)
+    assert caught.value.error_code == "invalid_response"

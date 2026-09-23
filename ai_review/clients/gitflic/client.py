@@ -2,9 +2,12 @@ from urllib.parse import quote
 import logging
 
 from httpx import AsyncBaseTransport, AsyncClient, AsyncHTTPTransport, Response
+from pydantic import BaseModel, ValidationError
 
 from ai_review.clients.gitflic.schema import (
     GitFlicAuthor,
+    GitFlicBranchProtection,
+    GitFlicBranchProtectionsPage,
     GitFlicChanges,
     GitFlicCreateDiscussion,
     GitFlicDiscussion,
@@ -12,6 +15,8 @@ from ai_review.clients.gitflic.schema import (
     GitFlicMergeRequest,
     GitFlicMergeRequestsPage,
     GitFlicNote,
+    GitFlicPipelineStartRequest,
+    GitFlicPipelineStartResponse,
     GitFlicReply,
 )
 from ai_review.libs.config.http import HTTPClientWithTokenConfig
@@ -25,6 +30,21 @@ logger = logging.getLogger("GITFLIC_HTTP_CLIENT")
 
 class GitFlicHTTPClientError(HTTPClientError):
     pass
+
+
+class GitFlicProtocolError(Exception):
+    def __init__(
+        self,
+        endpoint_code: str,
+        status_code: int,
+        request_id: str | None = None,
+        error_code: str = "invalid_response",
+    ) -> None:
+        self.endpoint_code = endpoint_code
+        self.status_code = status_code
+        self.request_id = request_id
+        self.error_code = error_code
+        super().__init__(f"GitFlic {endpoint_code}: {error_code} (HTTP {status_code})")
 
 
 class GitFlicHTTPClient(HTTPClient):
@@ -70,13 +90,16 @@ class GitFlicHTTPClient(HTTPClient):
         self._per_page = per_page or default_per_page
         self._max_pages = default_max_pages if max_pages is None else max_pages
 
-    async def _request(self, method: str, url: str, **kwargs: object) -> Response:
+    async def _request(
+        self, method: str, url: str, *, allow_fallback: bool = True, **kwargs: object
+    ) -> Response:
         response = await self.client.request(method, url, **kwargs)
         fallback_header = (
             f"token {self._fallback_token}" if self._fallback_token else None
         )
         if (
-            response.status_code not in (401, 403)
+            not allow_fallback
+            or response.status_code not in (401, 403)
             or not fallback_header
             or response.request.headers.get("Authorization") == fallback_header
         ):
@@ -97,13 +120,15 @@ class GitFlicHTTPClient(HTTPClient):
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
     async def _get(self, url: str, *, params: dict[str, int] | None = None) -> Response:
-        return await self._request("GET", url, params=params, follow_redirects=True)
+        return await self._request("GET", url, params=params, follow_redirects=False)
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
     async def _post(
         self, url: str, *, json: dict[str, object] | None = None
     ) -> Response:
-        return await self._request("POST", url, json=json, extensions=NO_RETRY)
+        return await self._request(
+            "POST", url, json=json, extensions=NO_RETRY, allow_fallback=False
+        )
 
     @handle_http_error(client="GitFlicHTTPClient", exception=GitFlicHTTPClientError)
     async def _delete(self, url: str) -> Response:
@@ -149,6 +174,152 @@ class GitFlicHTTPClient(HTTPClient):
                 raise RuntimeError(
                     f"Pagination exceeded max_pages={self._max_pages}"
                 )
+
+    @staticmethod
+    def _safe_request_id(response: Response) -> str | None:
+        for name in ("x-request-id", "request-id"):
+            value = response.headers.get(name)
+            if value and len(value) <= 128 and all(32 <= ord(char) <= 126 for char in value):
+                return value
+        return None
+
+    @classmethod
+    def _validate_response(
+        cls, response: Response, model: type[BaseModel], endpoint_code: str
+    ) -> BaseModel:
+        try:
+            return model.model_validate_json(response.content)
+        except (ValidationError, ValueError, UnicodeError) as error:
+            raise GitFlicProtocolError(
+                endpoint_code=endpoint_code,
+                status_code=response.status_code,
+                request_id=cls._safe_request_id(response),
+            ) from error
+
+    @staticmethod
+    def _validate_page(
+        page: object,
+        *,
+        expected_number: int,
+        previous_totals: tuple[int, int] | None,
+        endpoint_code: str,
+    ) -> tuple[int, int]:
+        number = getattr(page, "number")
+        total_pages = getattr(page, "totalPages")
+        total_elements = getattr(page, "totalElements")
+        if (
+            number != expected_number
+            or total_pages < 0
+            or total_elements < 0
+            or (total_elements > 0 and total_pages == 0)
+            or (total_pages and number >= total_pages)
+        ):
+            raise GitFlicProtocolError(endpoint_code, 200)
+        totals = (total_pages, total_elements)
+        if previous_totals is not None and totals != previous_totals:
+            raise GitFlicProtocolError(endpoint_code, 200)
+        return totals
+
+    async def list_open_mrs_strict(
+        self, owner: str, project: str
+    ) -> tuple[GitFlicMergeRequest, ...]:
+        path = f"/project/{quote(owner, safe='')}/{quote(project, safe='')}/merge-request/list"
+        items: list[GitFlicMergeRequest] = []
+        totals: tuple[int, int] | None = None
+        raw_count = 0
+        for page_number in range(10):
+            response = await self._get(path, params={"page": page_number, "size": 100})
+            page = self._validate_response(response, GitFlicMergeRequestsPage, "merge_requests")
+            assert isinstance(page, GitFlicMergeRequestsPage)
+            totals = self._validate_page(
+                page.page, expected_number=page_number,
+                previous_totals=totals, endpoint_code="merge_requests",
+            )
+            raw = page.embedded.mergeRequestModelList
+            raw_count += len(raw)
+            if any(item.status is None for item in raw):
+                raise GitFlicProtocolError("merge_requests", response.status_code)
+            items.extend(item for item in raw if item.status and item.status.id == "OPENED")
+            if page_number + 1 >= page.page.totalPages:
+                if raw_count != page.page.totalElements:
+                    raise GitFlicProtocolError("merge_requests", response.status_code)
+                break
+        else:
+            raise GitFlicProtocolError("merge_requests", 200)
+        identifiers = [item.localId for item in items]
+        if len(identifiers) != len(set(identifiers)):
+            raise GitFlicProtocolError("merge_requests", 200)
+        return tuple(items)
+
+    async def get_discussions_strict(
+        self, owner: str, project: str, merge_request_id: int
+    ) -> tuple[GitFlicDiscussion, ...]:
+        path = f"{self._mr_path(owner, project, merge_request_id)}/discussions"
+        results: list[GitFlicDiscussion] = []
+        totals: tuple[int, int] | None = None
+        raw_count = 0
+        for page_number in range(5):
+            response = await self._get(path, params={"page": page_number, "size": 100})
+            page = self._validate_response(response, GitFlicDiscussionsPage, "discussions")
+            assert isinstance(page, GitFlicDiscussionsPage)
+            totals = self._validate_page(
+                page.page, expected_number=page_number,
+                previous_totals=totals, endpoint_code="discussions",
+            )
+            envelopes = page.embedded.restDiscussionModelList
+            raw_count += len(envelopes)
+            results.extend(
+                GitFlicDiscussion(**item.rootNote.model_dump(), replies=item.replies)
+                for item in envelopes
+            )
+            if page_number + 1 >= page.page.totalPages:
+                if raw_count != page.page.totalElements:
+                    raise GitFlicProtocolError("discussions", response.status_code)
+                return tuple(results)
+        raise GitFlicProtocolError("discussions", 200)
+
+    async def list_branch_protections(
+        self, owner: str, project: str
+    ) -> tuple[GitFlicBranchProtection, ...]:
+        path = f"/project/{quote(owner, safe='')}/{quote(project, safe='')}/branch-protection"
+        results: list[GitFlicBranchProtection] = []
+        totals: tuple[int, int] | None = None
+        for page_number in range(10):
+            response = await self._get(path, params={"page": page_number, "size": 100})
+            page = self._validate_response(response, GitFlicBranchProtectionsPage, "branch_protections")
+            assert isinstance(page, GitFlicBranchProtectionsPage)
+            totals = self._validate_page(
+                page.page, expected_number=page_number,
+                previous_totals=totals, endpoint_code="branch_protections",
+            )
+            results.extend(page.embedded.branchProtectionApiModelList)
+            if page_number + 1 >= page.page.totalPages:
+                if len(results) != page.page.totalElements:
+                    raise GitFlicProtocolError("branch_protections", response.status_code)
+                keys = [(item.branchTemplate, item.priority) for item in results]
+                if len(keys) != len(set(keys)):
+                    raise GitFlicProtocolError("branch_protections", response.status_code)
+                return tuple(results)
+        raise GitFlicProtocolError("branch_protections", 200)
+
+    async def start_pipeline(
+        self,
+        owner: str,
+        project: str,
+        request: GitFlicPipelineStartRequest,
+    ) -> GitFlicPipelineStartResponse:
+        path = f"/project/{quote(owner, safe='')}/{quote(project, safe='')}/cicd/pipeline/start"
+        response = await self._post(path, json=request.model_dump())
+        result = self._validate_response(response, GitFlicPipelineStartResponse, "pipeline_start")
+        assert isinstance(result, GitFlicPipelineStartResponse)
+        try:
+            result.display_id
+        except ValueError as error:
+            raise GitFlicProtocolError(
+                "pipeline_start", response.status_code,
+                request_id=self._safe_request_id(response),
+            ) from error
+        return result
 
     async def get_changes(
         self, owner: str, project: str, merge_request_id: int

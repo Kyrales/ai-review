@@ -153,7 +153,7 @@ git commit -m "refactor: share followup state analysis"
 - Consumes: существующий `GitFlicHTTPClient`, `_get`, `_post`, pagination/fallback transport.
 - Produces: `list_branch_protections`, `start_pipeline`, `GitFlicBranchProtection`, `GitFlicPipelineStartRequest`, `GitFlicPipelineStartResponse`.
 
-- [ ] **Step 1: Написать failing schema/client tests**
+- [x] **Step 1: Написать failing schema/client tests**
 
 Добавить tests:
 
@@ -180,7 +180,7 @@ HTTP fixtures обязаны проверить percent-encoded aliases, paginat
 
 Добавить redirect test: GET возвращает 302 с `Location: https://attacker.invalid/`; ожидается `GitFlicHTTPClientError`, handler видит ровно один запрос и attacker endpoint не вызывается.
 
-- [ ] **Step 2: Запустить client tests и подтвердить RED**
+- [x] **Step 2: Запустить client tests и подтвердить RED**
 
 Run:
 
@@ -190,7 +190,7 @@ pytest -q ai_review/tests/suites/clients/gitflic/test_client.py -k 'protection o
 
 Expected: FAIL из-за отсутствующих моделей/методов и текущего `follow_redirects=True`.
 
-- [ ] **Step 3: Добавить strict Pydantic models**
+- [x] **Step 3: Добавить strict Pydantic models**
 
 В `schema.py` определить exact fields и validators:
 
@@ -220,13 +220,13 @@ class GitFlicPipelineStartResponse(GitFlicModel):
 
 Добавить property `display_id(self) -> str`: он принимает положительный integer `localId`, иначе canonical UUID v1–v5 из `pipeline_uuid`/`id`; лишние и управляющие символы отклоняются.
 
-- [ ] **Step 4: Реализовать API methods и запрет redirect**
+- [x] **Step 4: Реализовать API methods и запрет redirect**
 
 Удалить `follow_redirects=True` из `_get`. Расширить `_request(method, url, *, allow_fallback: bool = True, **kwargs)` и вызвать `_post` с `allow_fallback=False` плюс `NO_RETRY`, чтобы POST не повторялся ни transport, ни token fallback. Реализовать paginated `list_branch_protections` с embedded property `branchProtectionApiModelList`, max 10 страниц/1000 элементов. Добавить dispatch-specific strict readers: list MR — максимум 10 страниц size=100, discussions — максимум 5 страниц size=100; они валидируют expected page number, stable totals, cumulative count, unique MR IDs и обязательный status. Реализовать POST `project/{owner}/{project}/cicd/pipeline/start` с `request.model_dump()` и strict response validation.
 
 Добавить `GitFlicProtocolError`, который принимает только allowlisted `endpoint_code`, `status_code`, `error_code="invalid_response"` и safe request ID. Все `model_validate_json`/JSON decode errors в public client methods перехватывать и преобразовывать в него без `str(ValidationError)` и response content.
 
-- [ ] **Step 5: Запустить весь GitFlic client suite**
+- [x] **Step 5: Запустить весь GitFlic client suite**
 
 Run:
 
@@ -236,7 +236,7 @@ pytest -q ai_review/tests/suites/clients/gitflic/test_client.py
 
 Expected: PASS; существующие token fallback/retry/error-redaction tests остаются зелёными.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add ai_review/clients/gitflic/schema.py ai_review/clients/gitflic/client.py ai_review/tests/suites/clients/gitflic/test_client.py

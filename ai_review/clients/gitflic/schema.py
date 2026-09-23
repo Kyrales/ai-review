@@ -1,6 +1,7 @@
 from datetime import datetime
+from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class GitFlicModel(BaseModel):
@@ -160,3 +161,62 @@ class GitFlicMergeRequestsPage(GitFlicModel):
         if self.page.totalElements and "embedded" not in self.model_fields_set:
             raise ValueError("GitFlic omitted _embedded for a nonempty merge request page")
         return self
+
+
+def _safe_text(value: str) -> str:
+    if not value or any(ord(char) < 32 or ord(char) == 127 for char in value):
+        raise ValueError("value must be non-empty and contain no controls")
+    return value
+
+
+class GitFlicBranchProtection(GitFlicModel):
+    branchTemplate: str
+    allowedToPush: str
+    allowForcePush: bool
+    priority: int = 0
+
+    _validate_template = field_validator("branchTemplate")(_safe_text)
+
+
+class GitFlicBranchProtectionsEmbedded(GitFlicModel):
+    branchProtectionApiModelList: list[GitFlicBranchProtection]
+
+
+class GitFlicBranchProtectionsPage(GitFlicModel):
+    embedded: GitFlicBranchProtectionsEmbedded = Field(alias="_embedded")
+    page: GitFlicPage
+
+
+class GitFlicPipelineVariable(GitFlicModel):
+    key: str
+    value: str
+
+    _validate_key = field_validator("key")(_safe_text)
+
+
+class GitFlicPipelineStartRequest(GitFlicModel):
+    refName: str
+    isTag: bool = False
+    variables: tuple[GitFlicPipelineVariable, ...]
+
+    _validate_ref = field_validator("refName")(_safe_text)
+
+
+class GitFlicPipelineStartResponse(GitFlicModel):
+    localId: int | None = None
+    pipeline_uuid: str | None = None
+    id: str | None = None
+
+    @property
+    def display_id(self) -> str:
+        if self.localId is not None:
+            if self.localId <= 0:
+                raise ValueError("localId must be positive")
+            return str(self.localId)
+        for value in (self.pipeline_uuid, self.id):
+            if value is not None:
+                parsed = UUID(_safe_text(value))
+                if parsed.version not in range(1, 6):
+                    raise ValueError("pipeline id must be a canonical UUID")
+                return str(parsed)
+        raise ValueError("pipeline response contains no usable identifier")
