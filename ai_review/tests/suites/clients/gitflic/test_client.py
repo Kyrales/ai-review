@@ -462,6 +462,8 @@ async def test_http_error_does_not_expose_response_body_or_arbitrary_headers() -
     assert secret not in str(error.value)
     assert secret not in error.value.details
     assert error.value.request_id == "safe-request-42"
+    assert error.value.__cause__ is None
+    assert error.value.__context__ is None
 
 
 @pytest.mark.asyncio
@@ -726,6 +728,38 @@ async def test_existing_discussion_post_keeps_fallback_compatibility() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fallback_get_does_not_change_pipeline_post_identity() -> None:
+    requests: list[tuple[str, str]] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        token = request.headers["Authorization"]
+        requests.append((request.method, token))
+        if request.method == "GET" and token == "token token":
+            return httpx.Response(403, request=request)
+        if request.method == "GET":
+            return httpx.Response(200, request=request, json=AUTHOR)
+        return httpx.Response(200, request=request, json={"localId": 42})
+
+    client = GitFlicHTTPClient(
+        transport=httpx.MockTransport(handler), fallback_token="reserve"
+    )
+    try:
+        await client.get_authenticated_user()
+        await client.start_pipeline(
+            "rt-vt", "sppr",
+            GitFlicPipelineStartRequest(refName="ai-review-control", variables=()),
+        )
+    finally:
+        await client.aclose()
+
+    assert requests == [
+        ("GET", "token token"),
+        ("GET", "token reserve"),
+        ("POST", "token token"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_pipeline_start_returns_stable_display_id() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, request=request, json={"localId": 3310})
@@ -864,3 +898,22 @@ async def test_strict_merge_request_detail_redacts_invalid_response() -> None:
 
     assert secret not in str(caught.value)
     assert caught.value.__context__ is None
+
+
+@pytest.mark.asyncio
+async def test_strict_snapshot_rejects_inconsistent_page_math_and_cardinality() -> None:
+    items = [merge_request(value, "CLOSED") for value in range(1, 101)]
+    items.append(merge_request(101, "OPENED"))
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, request=request, json={
+            "_embedded": {"mergeRequestModelList": items},
+            "page": {"size": 100, "totalElements": 101, "totalPages": 1, "number": 0},
+        })
+
+    client = GitFlicHTTPClient(transport=httpx.MockTransport(handler))
+    try:
+        with pytest.raises(GitFlicProtocolError):
+            await client.list_open_mrs_strict("rt-vt", "sppr")
+    finally:
+        await client.aclose()

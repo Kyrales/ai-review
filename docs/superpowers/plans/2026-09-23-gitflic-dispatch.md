@@ -851,7 +851,9 @@ Read-only API preview показывает exact snapshot и число actionab
 - [x] Round 1 (`gpt-5.6-sol`, high): исправлены redaction exception chain,
   strict pagination, legacy POST fallback, CLI URL/ref validation, explicit
   closed-MR handling и недостающие regression matrices.
-- [ ] Round 2 (`gpt-5.6-sol`, high).
+- [x] Round 2 (`gpt-5.6-sol`, high): исправлены fallback identity после GET,
+  математические/cardinality-инварианты pagination, sanitized HTTP exception
+  graph; aliases и classifier matrix дополнительно усилены.
 
 - [ ] Каждое требование design spec связано с task/test.
 - [ ] В `sppr_gitflic` не создаются `.py` и не добавляется host Python requirement.

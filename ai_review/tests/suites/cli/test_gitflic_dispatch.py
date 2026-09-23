@@ -66,9 +66,14 @@ def test_gitflic_dispatch_invalid_url_and_ref_return_usage_json(monkeypatch) -> 
 
     bad_url = runner.invoke(app, [*common, "--control-ref", "ai-review-control", "--api-url", "https://[::1"])
     bad_ref = runner.invoke(app, [*common, "--control-ref", "../evil"])
+    dot_owner = runner.invoke(app, [
+        "gitflic-dispatch", "--owner", "..", "--project", "sppr",
+        "--control-ref", "ai-review-control", "--merge-request-id", "7",
+    ])
 
     assert bad_url.exit_code == 2
     assert bad_ref.exit_code == 2
+    assert dot_owner.exit_code == 2
     assert json.loads(bad_url.output)["error_code"] == "invalid_configuration"
     assert json.loads(bad_ref.output)["error_code"] == "invalid_configuration"
 

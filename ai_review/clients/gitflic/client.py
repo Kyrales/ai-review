@@ -107,7 +107,6 @@ class GitFlicHTTPClient(HTTPClient):
         logger.warning(
             "GitFlic rejected the primary token; retrying with the configured fallback token"
         )
-        self.client.headers["Authorization"] = fallback_header
         headers = dict(kwargs.pop("headers", {}) or {})
         headers["Authorization"] = fallback_header
         return await self.client.request(method, url, headers=headers, **kwargs)
@@ -226,6 +225,11 @@ class GitFlicHTTPClient(HTTPClient):
         number = getattr(page, "number")
         total_pages = getattr(page, "totalPages")
         total_elements = getattr(page, "totalElements")
+        expected_pages = (
+            (total_elements + expected_size - 1) // expected_size
+            if total_elements
+            else total_pages
+        )
         if (
             number != expected_number
             or getattr(page, "size") != expected_size
@@ -233,6 +237,7 @@ class GitFlicHTTPClient(HTTPClient):
             or total_elements < 0
             or total_pages > max_pages
             or total_elements > expected_size * max_pages
+            or (total_elements > 0 and total_pages != expected_pages)
             or (total_elements > 0 and total_pages == 0)
             or (total_pages and number >= total_pages)
         ):
@@ -241,6 +246,26 @@ class GitFlicHTTPClient(HTTPClient):
         if previous_totals is not None and totals != previous_totals:
             raise GitFlicProtocolError(endpoint_code, 200)
         return totals
+
+    @staticmethod
+    def _validate_page_items(
+        page: object, item_count: int, cumulative_count: int, endpoint_code: str
+    ) -> None:
+        size = getattr(page, "size")
+        number = getattr(page, "number")
+        total_pages = getattr(page, "totalPages")
+        total_elements = getattr(page, "totalElements")
+        expected_count = (
+            size
+            if number + 1 < total_pages
+            else total_elements - size * max(total_pages - 1, 0)
+        )
+        if (
+            item_count > size
+            or cumulative_count > total_elements
+            or (total_elements and item_count != expected_count)
+        ):
+            raise GitFlicProtocolError(endpoint_code, 200)
 
     async def list_open_mrs_strict(
         self, owner: str, project: str
@@ -261,6 +286,7 @@ class GitFlicHTTPClient(HTTPClient):
             )
             raw = page.embedded.mergeRequestModelList
             raw_count += len(raw)
+            self._validate_page_items(page.page, len(raw), raw_count, "merge_requests")
             if raw_count > page.page.totalElements or raw_count > 1000:
                 raise GitFlicProtocolError("merge_requests", response.status_code)
             for item in raw:
@@ -299,6 +325,7 @@ class GitFlicHTTPClient(HTTPClient):
             )
             envelopes = page.embedded.restDiscussionModelList
             raw_count += len(envelopes)
+            self._validate_page_items(page.page, len(envelopes), raw_count, "discussions")
             if raw_count > page.page.totalElements or raw_count > 500:
                 raise GitFlicProtocolError("discussions", response.status_code)
             results.extend(
@@ -317,6 +344,7 @@ class GitFlicHTTPClient(HTTPClient):
         path = f"/project/{quote(owner, safe='')}/{quote(project, safe='')}/branch-protection"
         results: list[GitFlicBranchProtection] = []
         totals: tuple[int, int] | None = None
+        raw_count = 0
         for page_number in range(10):
             response = await self._get(path, params={"page": page_number, "size": 100})
             page = self._validate_response(response, GitFlicBranchProtectionsPage, "branch_protections")
@@ -326,7 +354,12 @@ class GitFlicHTTPClient(HTTPClient):
                 previous_totals=totals, endpoint_code="branch_protections",
                 expected_size=100, max_pages=10,
             )
-            results.extend(page.embedded.branchProtectionApiModelList)
+            raw = page.embedded.branchProtectionApiModelList
+            raw_count += len(raw)
+            self._validate_page_items(page.page, len(raw), raw_count, "branch_protections")
+            if raw_count > 1000:
+                raise GitFlicProtocolError("branch_protections", response.status_code)
+            results.extend(raw)
             if page_number + 1 >= page.page.totalPages:
                 if len(results) != page.page.totalElements:
                     raise GitFlicProtocolError("branch_protections", response.status_code)

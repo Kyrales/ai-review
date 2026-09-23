@@ -15,6 +15,8 @@ from ai_review.services.dispatch.models import (
     classify_dispatch,
 )
 from ai_review.services.dispatch.service import GitFlicDispatchService
+from ai_review.services.knowledge.block import render_knowledge_block
+from ai_review.services.knowledge.schema import KnowledgeCandidate
 from ai_review.services.vcs.markers import MarkerKind, ReviewMarker, decorate_ai_message
 from ai_review.services.vcs.types import ReviewCommentSchema, ReviewThreadSchema, ThreadKind, UserSchema
 
@@ -220,3 +222,82 @@ def test_dispatch_selection_applies_limit_after_deduplication() -> None:
         DispatchSelection(merge_request_ids=tuple(range(1, 12)))
     with pytest.raises(ValueError):
         DispatchSelection(merge_request_ids=(0,))
+
+
+@pytest.mark.parametrize("version", ["v1", "v2"])
+def test_classify_dispatch_covered_reply_is_none(version: str) -> None:
+    reply_id = "11111111-1111-4111-8111-111111111111"
+    reply = ReviewCommentSchema(id=reply_id, body="fixed", parent_id="SUMMARY-thread")
+    values = {}
+    if version == "v2":
+        values = {"origin": "SUMMARY-thread", "publication": "c" * 64}
+    followup = ReviewCommentSchema(
+        id="followup", parent_id="SUMMARY-thread", author=UserSchema(id=TRUSTED),
+        body=decorate_ai_message("done", ReviewMarker(
+            version=version, kind=MarkerKind.FOLLOWUP, head=HEAD,
+            covered=(reply_id,), verdict="open", **values,
+        )),
+    )
+    summary = thread(
+        ThreadKind.SUMMARY, marked(MarkerKind.SUMMARY, status="complete"),
+        reply, followup,
+    )
+
+    assert classify_dispatch((summary,), TRUSTED, HEAD).mode is DispatchMode.NONE
+
+
+def test_classify_dispatch_knowledge_requires_resolve_but_damaged_block_does_not() -> None:
+    reply = ReviewCommentSchema(id="reply", body="rule", parent_id="SUMMARY-thread")
+    base = ReviewMarker(
+        version="v2", kind=MarkerKind.FOLLOWUP, head=HEAD, covered=("reply",),
+        verdict="open", origin="SUMMARY-thread", publication="d" * 64,
+    )
+    knowledge = render_knowledge_block((KnowledgeCandidate(
+        source_reply_id="reply", source_quote="rule", type="new_check",
+        rule="Check the rule", rationale="Confirmed by reviewer",
+    ),))
+    valid = ReviewCommentSchema(
+        id="valid", parent_id="SUMMARY-thread", author=UserSchema(id=TRUSTED),
+        body=decorate_ai_message("done\n\n" + knowledge, base),
+    )
+    damaged = valid.model_copy(update={"body": valid.body.replace('"rules"', '"broken"')})
+    root = marked(MarkerKind.SUMMARY, status="complete")
+
+    valid_decision = classify_dispatch(
+        (thread(ThreadKind.SUMMARY, root, reply, valid),), TRUSTED, HEAD
+    )
+    damaged_decision = classify_dispatch(
+        (thread(ThreadKind.SUMMARY, root, reply, damaged),), TRUSTED, HEAD
+    )
+
+    assert valid_decision.mode is DispatchMode.FOLLOWUP
+    assert damaged_decision.mode is DispatchMode.NONE
+
+
+def test_classify_dispatch_resolved_terminal_followup_is_none() -> None:
+    reply = ReviewCommentSchema(id="reply", body="fixed", parent_id="SUMMARY-thread")
+    followup = ReviewCommentSchema(
+        id="followup", parent_id="SUMMARY-thread", author=UserSchema(id=TRUSTED),
+        body=decorate_ai_message("done", ReviewMarker(
+            version="v2", kind=MarkerKind.FOLLOWUP, head=HEAD, covered=("reply",),
+            verdict="fixed", origin="SUMMARY-thread", publication="e" * 64,
+        )),
+    )
+    summary = thread(
+        ThreadKind.SUMMARY, marked(MarkerKind.SUMMARY, status="complete"),
+        reply, followup, resolved=True,
+    )
+
+    assert classify_dispatch((summary,), TRUSTED, HEAD).mode is DispatchMode.NONE
+
+
+def test_classify_dispatch_ignores_untrusted_root_marker() -> None:
+    root = ReviewCommentSchema(
+        id="root", body=marked(MarkerKind.SUMMARY, status="complete"),
+        author=UserSchema(id="attacker"),
+    )
+    fake = ReviewThreadSchema(
+        id="fake", kind=ThreadKind.SUMMARY, comments=[root], resolved=False
+    )
+
+    assert classify_dispatch((fake,), TRUSTED, HEAD).mode is DispatchMode.INITIAL

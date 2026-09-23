@@ -30,6 +30,12 @@ def _validate_text(value: str) -> bool:
     return bool(value) and not any(ord(char) < 32 or ord(char) == 127 for char in value)
 
 
+def _validate_alias(value: str) -> bool:
+    return _validate_text(value) and all(
+        component not in {"", ".", ".."} for component in value.split("/")
+    )
+
+
 def _validate_api_url(value: str) -> bool:
     try:
         parsed = urlsplit(value)
@@ -67,7 +73,9 @@ async def run_gitflic_dispatch_command(
     if (
         not token
         or fallback == token
-        or not all(_validate_text(value) for value in (owner, project, control_ref))
+        or not _validate_alias(owner)
+        or not _validate_alias(project)
+        or not _validate_text(control_ref)
         or not is_safe_ref(control_ref)
         or not _validate_api_url(api_url)
     ):
