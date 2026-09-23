@@ -523,11 +523,11 @@ git commit -m "feat: add GitFlic dispatch command"
 - Consumes: готовую `gitflic-dispatch` command.
 - Produces: подписанный image ref формата `ghcr.io/kyrales/ai-review@sha256:` плюс 64 lowercase hex и зафиксированный release evidence для интеграции.
 
-- [ ] **Step 1: Добавить failing docs/workflow assertions**
+- [x] **Step 1: Добавить failing docs/workflow assertions**
 
 Добавить в image test чтение workflow/docs и проверки: publish smoke вызывает `gitflic-dispatch --help`; документация описывает `--all`, repeated ID, environment-only tokens, exit codes и no host Python.
 
-- [ ] **Step 2: Запустить assertion и подтвердить RED**
+- [x] **Step 2: Запустить assertion и подтвердить RED**
 
 Run:
 
@@ -537,11 +537,11 @@ pytest -q ai_review/tests/suites/image/test_image_smoke.py
 
 Expected: FAIL на отсутствующем publish/docs contract.
 
-- [ ] **Step 3: Обновить документацию и publish smoke**
+- [x] **Step 3: Обновить документацию и publish smoke**
 
 Добавить пример container command без значений secrets. В workflow до push запустить hardened local image с `gitflic-dispatch --help`. После push сохранить `published_ref` exact digest как job output и подписать именно его существующим keyless cosign identity.
 
-- [ ] **Step 4: Запустить полный Python suite**
+- [x] **Step 4: Запустить полный Python suite**
 
 Run:
 
@@ -551,7 +551,7 @@ pytest -q
 
 Expected: PASS.
 
-- [ ] **Step 5: Собрать обязательный Windows release**
+- [x] **Step 5: Собрать обязательный Windows release**
 
 Run из `F:\1C\Projects\RT_VT\ai_review`:
 
@@ -563,7 +563,7 @@ python build_release.py
 
 Expected: оба help exit 0; binaries остаются ignored и не добавляются в git.
 
-- [ ] **Step 6: Commit `ai_review` docs/workflow**
+- [x] **Step 6: Commit `ai_review` docs/workflow**
 
 ```bash
 git add docs/cli/README.md docs/ci/README.md README.md .github/workflows/workflow-publish.yml ai_review/tests/suites/image/test_image_smoke.py

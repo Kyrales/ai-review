@@ -84,6 +84,13 @@ only runtime marker metadata published by the configured GitFlic user and
 rechecks a thread before resolving it. Keep source checkouts read-only and
 store YAML configuration and prompts in the protected control pipeline.
 
+Operators can start reviews for selected GitFlic merge requests with the
+container-only `ai-review gitflic-dispatch` command. Pass repeated
+`--merge-request-id` values or `--all`; keep `AI_REVIEW_GITFLIC_TOKEN` and the
+optional fallback token in environment variables. The runner needs no host Python.
+The command uses exit 0 for success, exit 1 for partial item failures, exit 2
+for usage/configuration failures, and exit 3 for source/security failures.
+
 Project teams can optionally turn trusted reviewer corrections into reusable
 review rules. See [Knowledge sync for 1C projects](./docs/knowledge-sync.md) for
 the GitFlic setup, path mapping and migration checklist. The feature is off by

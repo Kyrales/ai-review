@@ -42,10 +42,29 @@ ai-review --help
 | `ai-review clear-inline`      | Removes all **AI-generated inline comments** from the review.             | `ai-review clear-inline`      |
 | `ai-review clear-summary`     | Removes all **AI-generated summary comments** from the review.            | `ai-review clear-summary`     |
 | `ai-review show-config`       | Prints the currently resolved configuration (merged from YAML/JSON/ENV).  | `ai-review show-config`       |
+| `ai-review gitflic-dispatch`  | Starts trusted worker pipelines for selected open GitFlic MRs.            | See below                     |
 
 ---
 
 ## 💡 Examples
+
+### GitFlic manual dispatch
+
+Run this command inside the signed container. Select either all open merge
+requests or up to ten explicit IDs (repeat the option):
+
+```bash
+ai-review gitflic-dispatch --owner rt-vt --project sppr \
+  --control-ref ai-review-control --merge-request-id 79 --merge-request-id 81
+ai-review gitflic-dispatch --owner rt-vt --project sppr \
+  --control-ref ai-review-control --all
+```
+
+Credentials are environment-only: `AI_REVIEW_GITFLIC_TOKEN` is required,
+`AI_REVIEW_GITFLIC_TOKEN2` is an optional GET fallback, and
+`AI_REVIEW_GITFLIC_USER_ID` may pin the trusted reviewer UUID. No token CLI
+option exists. Exit codes are: exit 0 success, exit 1 partial item failures,
+exit 2 usage/configuration error, exit 3 source/security/preflight failure.
 
 ### 🧠 Full Review
 

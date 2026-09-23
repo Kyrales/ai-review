@@ -25,3 +25,13 @@ Each example shows how to:
 
 👉 Choose the template matching your CI system, copy it into your repository, and adjust environment
 variables (`OPENAI_API_KEY`, `GITHUB_TOKEN`, `CI_JOB_TOKEN`, `BITBUCKET_TOKEN`, etc.) as needed.
+
+## GitFlic manual dispatch
+
+The `gitflic-dispatch` command is intended for the signed AI Review container.
+It needs no host Python installation: the GitFlic runner only supplies
+Docker/Cosign and environment secrets. Use `--all` or repeated
+`--merge-request-id` options; tokens stay in `AI_REVIEW_GITFLIC_TOKEN` and
+optional `AI_REVIEW_GITFLIC_TOKEN2`. The command returns exit 0 on success,
+exit 1 for partial item failures, exit 2 for usage/configuration errors, and
+exit 3 for source, security, or preflight failures.
