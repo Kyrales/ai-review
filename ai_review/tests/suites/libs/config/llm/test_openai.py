@@ -8,6 +8,7 @@ from ai_review.libs.config.llm.openai import OpenAIMetaConfig
     [
         ("gpt-5", True),
         ("gpt-5-preview", True),
+        ("gpt-6-sol", True),
         ("gpt-4.1", True),
         ("gpt-4.1-mini", True),
         ("gpt-4o", False),
